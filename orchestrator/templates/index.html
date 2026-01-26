@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Docker Arena Prototype</title>
+    <style>
+        body {
+            font-family: monospace;
+            background: #0d1117;
+            color: #c9d1d9;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        h1 {
+            margin-bottom: 20px;
+        }
+
+        #arena {
+            display: grid;
+            grid-template-columns: repeat(3, 100px);
+            /* 3x3 Grid */
+            grid-gap: 10px;
+        }
+
+        .node {
+            width: 100px;
+            height: 100px;
+            background: #161b22;
+            border: 2px solid #30363d;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+        }
+
+        .node .id {
+            font-size: 0.8em;
+            color: #8b949e;
+        }
+
+        .node.active {
+            border-color: #58a6ff;
+            box-shadow: 0 0 10px #58a6ff44;
+        }
+
+        .gladiator {
+            width: 60px;
+            height: 60px;
+            background: #238636;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            z-index: 10;
+        }
+
+        .gladiator.enemy {
+            background: #da3633;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id="container" style="display: flex; flex-direction: row; gap: 20px;">
+        <div id="arena-container">
+            <h1>Arena Visualizer (4x4)</h1>
+            <div id="status">Loading...</div>
+            <div id="arena"></div>
+        </div>
+        <div id="logs-container"
+            style="width: 300px; background: #161b22; border: 1px solid #30363d; padding: 10px; height: 500px; overflow-y: auto;">
+            <h3>Live Feed</h3>
+            <div id="logs">Waiting for updates...</div>
+        </div>
+    </div>
+
+    <script>
+        async function fetchGrid() {
+            const statusDiv = document.getElementById('status');
+            try {
+                const res = await fetch('/api/grid');
+                if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+                const data = await res.json();
+
+                // Handle new wrapper format { grid: ..., logs: ... } 
+                // or fallback for old format if something goes wrong
+                const gridData = data.grid || data;
+                const logData = data.logs || {};
+
+                statusDiv.innerText = `Connected. Grid Size: ${Object.keys(gridData).length} nodes`;
+                renderGrid(gridData);
+                renderLogs(logData);
+            } catch (e) {
+                console.error("Error fetching grid:", e);
+                statusDiv.innerText = `Error: ${e.message}`;
+                statusDiv.style.color = 'red';
+            }
+        }
+
+        function renderLogs(logs) {
+            const logsDiv = document.getElementById('logs');
+            if (Object.keys(logs).length === 0) {
+                logsDiv.innerHTML = "<i>No activity...</i>";
+                return;
+            }
+
+            let html = "";
+            for (const [id, messages] of Object.entries(logs)) {
+                html += `<strong>${id}</strong>:<br>`;
+                messages.slice().reverse().forEach(msg => {
+                    html += `<div style="font-size: 0.8em; margin-bottom: 2px; color: #8b949e;">${msg}</div>`;
+                });
+                html += "<hr style='border-color: #30363d;'>";
+            }
+            logsDiv.innerHTML = html;
+            // Auto scroll to bottom of the container
+            const container = document.getElementById('logs-container');
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function renderGrid(data) {
+            const arena = document.getElementById('arena');
+            arena.innerHTML = '';
+
+            let maxX = 0;
+            let maxY = 0;
+            Object.keys(data).forEach(k => {
+                const parts = k.split(',');
+                if (parts.length === 2) {
+                    maxX = Math.max(maxX, parseInt(parts[0]));
+                    maxY = Math.max(maxY, parseInt(parts[1]));
+                }
+            });
+            const cols = maxX + 1;
+            const rows = maxY + 1;
+
+            arena.style.gridTemplateColumns = `repeat(${cols}, 100px)`;
+
+            for (let y = 0; y < rows; y++) {
+                for (let x = 0; x < cols; x++) {
+                    const key = `${x},${y}`;
+                    const cell = data[key];
+
+                    const nodeDiv = document.createElement('div');
+                    nodeDiv.className = 'node';
+                    nodeDiv.innerHTML = `<span class="id">${x},${y}</span>`;
+
+                    if (cell) {
+                        if (cell.gladiator) {
+                            const gladDiv = document.createElement('div');
+                            gladDiv.className = 'gladiator';
+                            if (cell.gladiator !== 'Glad_A') gladDiv.classList.add('enemy');
+                            gladDiv.innerText = cell.gladiator.substring(0, 2); // Show first 2 chars
+                            nodeDiv.appendChild(gladDiv);
+                            nodeDiv.classList.add('active');
+
+                            // Highlight host container logic?
+                            if (cell.id.includes(cell.gladiator)) {
+                                // ?
+                            }
+                        }
+                    } else {
+                        nodeDiv.style.opacity = '0.5';
+                        nodeDiv.innerText += ' (Offline)';
+                    }
+
+                    arena.appendChild(nodeDiv);
+                }
+            }
+        }
+
+        setInterval(fetchGrid, 1000);
+        fetchGrid();
+    </script>
+</body>
+
+</html>

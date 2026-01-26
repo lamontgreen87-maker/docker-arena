@@ -1,0 +1,41 @@
+FROM ubuntu:22.04
+
+# Install "Combat" and "System" tools
+RUN apt-get update && apt-get install -y \
+    netcat \
+    nmap \
+    iproute2 \
+    iputils-ping \
+    openssh-server \
+    python3 \
+    python3-pip \
+    curl \
+    vim \
+    hydra \
+    sshpass \
+    iptables \
+    && rm -rf /var/lib/apt/lists/*
+
+# Setup SSH (Optional, for migration if we go that route)
+RUN mkdir /var/run/sshd
+RUN echo 'root:root' | chpasswd
+RUN echo "PermitRootLogin yes" >> /etc/ssh/sshd_config && \
+    echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config
+
+# Create a "Gladiator" directory where the agent will live
+RUN mkdir -p /gladiator/data
+
+# Expose ports for "Hacking"
+# 22: SSH
+# 9000-9007: Directional Ports
+EXPOSE 22 9000 9001 9002 9003 9004 9005 9006 9007
+
+WORKDIR /gladiator
+COPY passwords.txt .
+COPY entrypoint.sh .
+COPY directional_defense.py .
+COPY weigh_in.py .
+RUN chmod +x entrypoint.sh
+
+# Keep container running via entrypoint
+ENTRYPOINT ["./entrypoint.sh"]

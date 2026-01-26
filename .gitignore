@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+*.log
+*.txt
+.idea/
+.vscode/
+venv/
+exec_out.txt
+run_out.txt
