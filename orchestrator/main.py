@@ -112,11 +112,14 @@ def check_arena_health():
 def home():
     return render_template('index.html')
 
-@app.route('/api/grid')
+@app.route('/api/grid', methods=['GET'])
 def get_grid():
+    key_loc = os.environ.get("KEY_LOCATION", "Unknown")
     return jsonify({
         "grid": grid_state,
-        "logs": gladiator_logs
+        "logs": gladiator_logs,
+        "system_health": system_health,
+        "key_location": key_loc
     })
 
 @app.route('/api/move/<gladiator_id>/<direction>')

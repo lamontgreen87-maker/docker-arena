@@ -172,6 +172,19 @@
                         nodeDiv.innerText += ' (Offline)';
                     }
 
+                    // Highlight key location if present
+                    if (keyLocation === key) {
+                        const keyIndicator = document.createElement('div');
+                        keyIndicator.innerText = 'KEY';
+                        keyIndicator.style.position = 'absolute';
+                        keyIndicator.style.top = '5px';
+                        keyIndicator.style.right = '5px';
+                        keyIndicator.style.fontSize = '0.7em';
+                        keyIndicator.style.color = '#ffeb3b';
+                        keyIndicator.style.fontWeight = 'bold';
+                        nodeDiv.appendChild(keyIndicator);
+                    }
+
                     arena.appendChild(nodeDiv);
                 }
             }

@@ -47,6 +47,12 @@ docker exec -d arena_0_0 python3 dummy_gladiator.py
 ### 4. Build Your Own
 See [gladiator_creation_guide.md](gladiator_creation_guide.md) for the API reference and rules.
 
+### 4. Victory Condition: The Golden Key 🏆
+At the start of the match, one random node holds the **Golden Key**.
+-   **Identify**: Hack nodes and look for `/gladiator/THE_KEY.txt`.
+-   **Claim**: If found, you win!
+-   **Specate**: The Dashboard highlights the Key's location with a yellow "KEY" indicator.
+
 ## 🛠️ Project Structure
 -   `orchestrator/`: The Python Flask app that manages the game state and visualizer.
 -   `node/`: The Dockerfile for the arena nodes (includes SSH, tools).

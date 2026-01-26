@@ -10,7 +10,14 @@ echo "root:$PASSWORD" | chpasswd
 echo "Container Started. Root Password set to: $PASSWORD" > /gladiator/password_hint.txt
 echo "Root Password is: $PASSWORD"
 
-# 4. Start Directional Defense (Background)
+# 4. Check for Golden Key
+if [ "$HAS_KEY" = "true" ]; then
+    UUID=$(cat /proc/sys/kernel/random/uuid)
+    echo "FLAG: $UUID" > /gladiator/THE_KEY.txt
+    echo "THIS NODE HAS THE GOLDEN KEY! ($UUID)"
+fi
+
+# 5. Start Directional Defense (Background)
 python3 /gladiator/directional_defense.py &
 
 # 5. Start SSHD

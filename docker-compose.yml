@@ -9,6 +9,8 @@ services:
     networks:
       arena_net:
         ipv4_address: 172.20.0.10
+    environment:
+    - HAS_KEY=false
     cap_add:
     - NET_ADMIN
     restart: unless-stopped
@@ -25,6 +27,8 @@ services:
     networks:
       arena_net:
         ipv4_address: 172.20.0.11
+    environment:
+    - HAS_KEY=false
     cap_add:
     - NET_ADMIN
     restart: unless-stopped
@@ -41,6 +45,8 @@ services:
     networks:
       arena_net:
         ipv4_address: 172.20.0.12
+    environment:
+    - HAS_KEY=false
     cap_add:
     - NET_ADMIN
     restart: unless-stopped
@@ -57,6 +63,8 @@ services:
     networks:
       arena_net:
         ipv4_address: 172.20.0.13
+    environment:
+    - HAS_KEY=false
     cap_add:
     - NET_ADMIN
     restart: unless-stopped
@@ -73,6 +81,8 @@ services:
     networks:
       arena_net:
         ipv4_address: 172.20.1.10
+    environment:
+    - HAS_KEY=false
     cap_add:
     - NET_ADMIN
     restart: unless-stopped
@@ -89,6 +99,8 @@ services:
     networks:
       arena_net:
         ipv4_address: 172.20.1.11
+    environment:
+    - HAS_KEY=false
     cap_add:
     - NET_ADMIN
     restart: unless-stopped
@@ -105,6 +117,8 @@ services:
     networks:
       arena_net:
         ipv4_address: 172.20.1.12
+    environment:
+    - HAS_KEY=false
     cap_add:
     - NET_ADMIN
     restart: unless-stopped
@@ -121,6 +135,8 @@ services:
     networks:
       arena_net:
         ipv4_address: 172.20.1.13
+    environment:
+    - HAS_KEY=false
     cap_add:
     - NET_ADMIN
     restart: unless-stopped
@@ -137,6 +153,8 @@ services:
     networks:
       arena_net:
         ipv4_address: 172.20.2.10
+    environment:
+    - HAS_KEY=false
     cap_add:
     - NET_ADMIN
     restart: unless-stopped
@@ -153,6 +171,8 @@ services:
     networks:
       arena_net:
         ipv4_address: 172.20.2.11
+    environment:
+    - HAS_KEY=false
     cap_add:
     - NET_ADMIN
     restart: unless-stopped
@@ -169,6 +189,8 @@ services:
     networks:
       arena_net:
         ipv4_address: 172.20.2.12
+    environment:
+    - HAS_KEY=false
     cap_add:
     - NET_ADMIN
     restart: unless-stopped
@@ -185,6 +207,8 @@ services:
     networks:
       arena_net:
         ipv4_address: 172.20.2.13
+    environment:
+    - HAS_KEY=false
     cap_add:
     - NET_ADMIN
     restart: unless-stopped
@@ -201,6 +225,8 @@ services:
     networks:
       arena_net:
         ipv4_address: 172.20.3.10
+    environment:
+    - HAS_KEY=false
     cap_add:
     - NET_ADMIN
     restart: unless-stopped
@@ -217,6 +243,8 @@ services:
     networks:
       arena_net:
         ipv4_address: 172.20.3.11
+    environment:
+    - HAS_KEY=false
     cap_add:
     - NET_ADMIN
     restart: unless-stopped
@@ -233,6 +261,8 @@ services:
     networks:
       arena_net:
         ipv4_address: 172.20.3.12
+    environment:
+    - HAS_KEY=false
     cap_add:
     - NET_ADMIN
     restart: unless-stopped
@@ -249,6 +279,8 @@ services:
     networks:
       arena_net:
         ipv4_address: 172.20.3.13
+    environment:
+    - HAS_KEY=true
     cap_add:
     - NET_ADMIN
     restart: unless-stopped
@@ -262,6 +294,8 @@ services:
       context: ./orchestrator
       dockerfile: Dockerfile
     container_name: arena_orchestrator
+    environment:
+    - KEY_LOCATION=3,3
     volumes:
     - /var/run/docker.sock:/var/run/docker.sock
     ports:
