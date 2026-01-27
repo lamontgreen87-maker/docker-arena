@@ -1,95 +1,53 @@
-# How to Build a Gladiator
+# 🏟️ How to Build a Gladiator (V5: Adaptive Minds)
 
-Welcome to the Arena. Your goal is to write a Python script that controls a "Gladiator" container, hacks into neighbors, and spreads your code across the grid.
+Welcome to the Arena. This guide explains how to build a competitive agent for the **6x6 Grid** and the world of **Neural Learning**.
 
-## 1. The Environment
-Your code runs as `root` inside a Docker container.
-- **OS**: Ubuntu 22.04
-- **Pre-installed Tools**: `nmap`, `netcat`, `sshpass`, `openssh-client`, `python3`, `scapy`.
-- **Network**: You are on a grid. Your neighbors are at `172.20.y.x`.
-- **Identity**: Your hostname is your container ID. Your "Game ID" (e.g., `Glad_A`) is in the `GLADIATOR_ID` environment variable.
+## 1. The Battlefield (6x6 Grid)
+The Arena is a **6x6 matrix** (36 nodes).
+- **Red Base**: `0,0` (Your home if you are on Team RED)
+- **Blue Base**: `5,5` (Your home if you are on Team BLUE)
+- **Neutral Zone**: Center nodes (`2,2`, `3,3`, etc.) where "The Key" usually spawns.
+- **Addressing**: Neighbors are at `172.20.y.x`.
+  - Node `0,0` is `172.20.0.10`
+  - Node `5,5` is `172.20.5.15`
 
-## 2. The Objective
-1.  **Scan**: Find neighbors with Port 22 open.
-2.  **Hack**: Brute-force the `root` password. (For practice mode, passwords are top-5 common ones).
-3.  **Claim**: Call the Orchestrator API to announce your victory.
-4.  **Migrate**: The system will automatically move your script to the new node.
+## 2. Neighborhood Entropy (The Signal)
+The grid is divided into **Thematic Neighborhoods** by row (Y-coordinate). To win, your AI must learn these themes:
+- **Row 0/4 (Theme 0)**: Classic Admin passwords (`admin`, `root`, `password`).
+- **Row 1/5 (Theme 1)**: RPG Fantasy passwords (`dragon`, `shadow`, `master`).
+- **Row 2 (Theme 2)**: Arena Combat passwords (`spartacus`, `gladiator`, `battle`).
+- **Row 3 (Theme 3)**: Mixed/Security passwords (`qwerty`, `123456`, `security`).
 
-## 3. The API (Orchestrator)
-The Orchestrator is available at `http://arena_orchestrator:5000`.
+> [!TIP]
+> **Learning Speedup**: A "script" will brute-force every word. A "Gladiator" will learn that Row 1 is "RPG" and prioritize `dragon` mutations first, cracking the node 10x faster.
 
--   `POST /api/register`
-    -   **Payload**: `{"gladiator_id": "YOUR_NAME"}`
-    -   **Returns**: `{"class": "Middleweight", "delay": 0}` (and other stats)
-    -   *Call this on startup to announce you are alive.*
+## 3. Migration & Memory
+When you `claim` a node, your code is physically moved. To stay smart, you must persist your data:
+- **Persistence**: Save your learned weights and state to `/gladiator/memory.json`. 
+- **The Orchestrator** will copy this file to your new home before starting your script.
 
--   `POST /api/claim`
-    -   **Payload**: `{"gladiator_id": "YOUR_NAME", "target_ip": "172.20.x.y"}`
-    -   **Returns**: `{"status": "claimed"}`
-    -   *Call this ONLY after you have verified you can SSH into the target.*
+## 4. The Orchestrator API (`http://arena_orchestrator:5000`)
 
--   `POST /api/log`
-    -   **Payload**: `{"gladiator_id": "YOUR_NAME", "message": "..."}`
-    -   *Use this to show off on the Live Dashboard.*
+### `POST /api/register`
+- **Payload**: `{"gladiator_id": "YOUR_NAME"}`
+- **Returns**: Your weight class and migration delay.
 
-## 4. Template Code
-Save this as `my_agent.py`.
+### `GET /api/grid`
+- **Returns**: Current grid occupancy, log feed, and most importantly: `key_location`.
 
-```python
-import os
-import time
-import requests # or urllib if requests isn't installed
-import subprocess
+### `POST /api/claim`
+- **Payload**: `{"gladiator_id": "YOUR_NAME", "target_ip": "172.20.y.x"}`
+- **Effect**: If you have cracked the target, you are moved there.
 
-ORCHESTRATOR = "http://arena_orchestrator:5000"
-MY_ID = os.environ.get("GLADIATOR_ID", "Unknown_Hero")
+## 5. Winning: The Golden Key 🔑
+The key spawns in the **Neutral Zone** (equidistant from bases).
+1.  **Seek**: Pathfind to the `key_location` provided by the API.
+2.  **Acquire**: Once on the node, check for `/gladiator/THE_KEY.txt`.
+3.  **Extract**: Deliver the key back to your Home Base (`0,0` or `5,5`) to win the match.
 
-def log(msg):
-    print(msg)
-    try:
-        requests.post(f"{ORCHESTRATOR}/api/log", json={"gladiator_id": MY_ID, "message": msg})
-    except:
-        pass
+## 6. Pro Strategy: Combat ⚔️
+- **Crash**: If you hack an occupied node, you can send a "Kill Command" (SSH) to reset the enemy back to their base.
+- **Shield**: Frequently rotate your own password to invalidate any "Pattern Learning" the enemy team has done on you.
 
-def main():
-    log(f"Gladiator {MY_ID} entering the arena...")
-    
-    # 1. Register
-    requests.post(f"{ORCHESTRATOR}/api/register", json={"gladiator_id": MY_ID})
-    
-    while True:
-        # 2. Logic Loop
-        log("Looking for targets...")
-        
-        # Example: Check a neighbor (Hardcoded for demo)
-        target = "172.20.0.1" 
-        
-        # 3. Hack (Pseudo-code)
-        # ret = subprocess.call(["sshpass", "-p", "123456", "ssh", f"root@{target}", "echo Success"])
-        # if ret == 0:
-        #     requests.post(f"{ORCHESTRATOR}/api/claim", json={"gladiator_id": MY_ID, "target_ip": target})
-        #     break
-        
-        time.sleep(5)
-
-if __name__ == "__main__":
-    main()
-```
-
-## 5. Deployment
-To test your Gladiator in the local arena:
-
-1.  Start the Arena (`docker-compose up`).
-2.  Copy your script into a node:
-    ```powershell
-    docker cp my_agent.py arena_0_0:/gladiator/
-    ```
-3.  Run it:
-    ```powershell
-    docker exec -d arena_0_0 python3 my_agent.py
-    ```
-
-## 6. Pro Tips
--   **Speed**: Use `sshpass` with `ConnectTimeout=5` to handle "Dialup" connections.
--   **Strategy**: Attack neighbors (Distance 1) first. Distant nodes have 300ms latency!
--   **Stealth**: You can modify `iptables` on your *own* node to block incoming attacks on Port 22 (Defensive Play).
+---
+*Good luck, Gladiator. Build a mind that recognizes the grid pattern before the enemy recognizes yours.*
