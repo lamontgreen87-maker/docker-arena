@@ -580,8 +580,10 @@ def crack_node(ip, x, y):
     
     # 5. Wait for background guesser if exploits failed
     if not password_result["found"]:
-        log("⏳ Web exploits failed. Waiting for password guesser...")
-        guesser_thread.join(timeout=30)
+        # If we have 0 web vulns, this IS our only hope, but don't spend forever if others are closer
+        timeout = 15 if not known_vulns else 20
+        log(f"⏳ Web exploits failed. Brute forcing (Timeout: {timeout}s)...")
+        guesser_thread.join(timeout=timeout)
     
     if password_result["found"]:
         log(f"🔓 PWNED via Brute Force: {password_result['password']}")
@@ -727,9 +729,16 @@ def main():
         # Sort by distance to target (closest first)
         neighbors.sort(key=lambda x: x[2])
         
+        # GREEDY FILTER: Only consider neighbors that bring us CLOSER or are sideways if we are stuck
+        # (Wandering is often caused by trying 'backwards' nodes when forward ones are hard)
+        best_neighbors = [n for n in neighbors if n[2] < best_dist]
+        if not best_neighbors:
+             # If no neighbor is closer, maybe try a 'sideways' one to avoid getting pinned
+             best_neighbors = [n for n in neighbors if n[2] == best_dist]
+        
         # 4. Try to migrate
         moved = False
-        for nx, ny, dist in neighbors:
+        for nx, ny, dist in best_neighbors:
             if moved: break
             
             target_ip = f"172.20.{ny}.{10+nx}"
@@ -751,8 +760,8 @@ def main():
                     log(f"⚠️ Migration failed: {target_ip}")
 
         if not moved:
-            log_status(f"⏳ Waiting for opening at ({my_y},{my_x})...")
-            time.sleep(10)
+            log_status(f"🔥 Waiting for opening at ({my_y},{my_x})...")
+            time.sleep(2)
 
 if __name__ == "__main__":
     main()
