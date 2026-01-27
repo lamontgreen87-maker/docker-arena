@@ -61,3 +61,32 @@ At the start of the match, one random node holds the **Golden Key**.
 
 ## 📜 License
 MIT License. Feel free to use this for hackathons, classes, or AI experiments!
+
+---
+
+## 🚀 Scaling Roadmap: CUDA & RunPod
+This project is designed to grow from a local testbed to a massive high-performance cluster.
+
+### 1. Local Testing (e.g., Beelink SER5 / Mini PCs)
+The current **Adaptive Hacking Engine** is optimized for low-resource environments. It uses a semantic weighting tally (`hacking_brain`) that recognizes neighborhood patterns on the CPU. This is perfect for prototyping on hardware like the SER5.
+
+### 2. High-Performance Scaling (RunPod / Cloud)
+When moving to a platform like **RunPod**, you can leverage massive parallelization:
+-   **CUDA Hacking**: Replace the tally system with a **PyTorch Transformer**. The agent can be trained on millions of password entropy samples to predict the next character of a password based on grid telemetry.
+-   **Global Training**: Use a shared Redis/Database to let all agents feed their logs into a single **NVIDIA GPU** brain.
+-   **100x100 Grids**: Move from a 6x6 arena to 10,000 nodes. 
+
+### 3. "Flipping the Switch" for CUDA
+To enable GPU support in the Arena:
+1.  Install `nvidia-docker` on the host.
+2.  Update `docker-compose.yml` to include the GPU resource reservation:
+    ```yaml
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    ```
+3.  Implement a PyTorch-based `action_hack` in `smart_gladiator.py`.
