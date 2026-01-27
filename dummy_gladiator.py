@@ -14,6 +14,10 @@ ORCHESTRATOR_URL = "http://arena_orchestrator:5000"
 ME = os.environ.get("GLADIATOR_ID", "Glad_A")
 KNOWN_HOSTS_FILE = "/gladiator/data/known_hosts.json"
 
+# CTF State
+has_key = False
+TEAM = "RED"  # Default, can be set via env or CLI
+
 
 
 def remote_log(msg):
@@ -163,8 +167,44 @@ def claim_room(target_ip):
     else:
         log(f"Claim failed.")
 
+def check_for_key():
+    """Check if we're standing on the key and handle win condition"""
+    global has_key
+    
+    # Check if we are standing on the key
+    if os.path.exists("/gladiator/THE_KEY.txt"):
+        if not has_key:
+            log("💎 FOUND THE KEY!! PICKING IT UP!")
+            has_key = True
+    
+    # Check Win Condition
+    my_ip = get_my_ip()
+    parts = my_ip.split('.')
+    my_y = int(parts[2])
+    my_x = int(parts[3]) - 10
+    
+    win = False
+    if has_key:
+        if TEAM == 'RED' and my_x == 0 and my_y == 0:
+            win = True
+        if TEAM == 'BLUE' and my_x == 5 and my_y == 5:
+            win = True
+    
+    if win:
+        log(f"🏆 {TEAM} TEAM VICTORY! KEY DELIVERED TO BASE!")
+        # Spam victory message
+        while True:
+            log(f"🏆 {TEAM} WINS 🏆")
+            time.sleep(10)
+
 def main():
-    log("Gladiator v0.2 (No Requests) Starting...")
+    global TEAM
+    
+    # Set team from CLI argument if provided
+    if len(sys.argv) > 1:
+        TEAM = sys.argv[1].upper()
+    
+    log(f"Gladiator v0.2 (Team {TEAM}) Starting...")
     
     # Create dummy model
     if not os.path.exists("/gladiator/data/model.bin"):
@@ -181,6 +221,9 @@ def main():
             sys.exit(1)
         
     while True:
+        # Check for CTF Objectives (Key Detection & Win Condition)
+        check_for_key()
+        
         targets = get_neighbors()
         
         # Parse my IP to coords

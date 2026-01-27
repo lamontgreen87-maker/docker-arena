@@ -28,70 +28,57 @@ with open("startup.log", "w") as f:
     f.write("Orchestrator Module Loaded.\n")
 
 
-def copy_gladiator(src_container_name, dest_container_name):
-    print(f"Migrating Gladiator from {src_container_name} to {dest_container_name}...")
-    
-    src = client.containers.get(src_container_name)
-    dest = client.containers.get(dest_container_name)
-
-    # Safety sleep to ensure memory.json is flushed to disk by the agent
-    time.sleep(1.0)
-
-    # 1. Get the data from source (and the script!)
-    # We grab /gladiator which contains both /data and smart_gladiator.py (if deployed there)
+def copy_gladiator(src_container_name, dest_container_name, team="RED"):
     try:
-        bits, stat = src.get_archive("/gladiator")
-    except docker.errors.NotFound:
-        print(f"Error: /gladiator not found in {src_container_name}")
-        return False
-
-    # 1.5. CHECK FOR TRAPS (Logic Bomb)
-    # The Trap must exist in the DESTINATION before the new agent arrives.
-    try:
-        # Check if trap.sh exists
-        check = dest.exec_run("test -f /gladiator/data/trap.sh")
-        if check.exit_code == 0:
-            print(f"⚠️ TRAP DETECTED in {dest_container_name}! Executing Logic Bomb...")
-            
-            # Execute the trap
-            dest.exec_run("chmod +x /gladiator/data/trap.sh", privileged=True)
-            process = dest.exec_run("/gladiator/data/trap.sh", privileged=True)
-            
-            print(f"💥 TRAP DETONATED: {process.output.decode()}")
-            
-            # If the trap killed the container, we fail.
-            dest.reload()
-            if dest.status != 'running':
-                print("💀 TRAP KILLED THE CONTAINER!")
-                return False
-                
-    except Exception as e:
-        print(f"Trap Error: {e}")
-
-    # 2. Put data into dest
-    dest.put_archive("/", bits) 
+        print(f"Migrating {team} Gladiator from {src_container_name} to {dest_container_name}...")
+        
+        src = client.containers.get(src_container_name)
+        dest = client.containers.get(dest_container_name)
     
-    # 3. START THE AGENT IN NEW HOME
-    # We look for smart_gladiator.py. If it exists, run it.
-    # Note: We run detached so we don't block.
-    # We rely on the script being at /gladiator/smart_gladiator.py
+        # Safety sleep to ensure memory files are flushed to disk
+        time.sleep(1.0)
     
-    print(f"Starting agent in {dest_container_name}...")
+        # 1. Get the data from source
+        try:
+            bits, stat = src.get_archive("/gladiator")
+        except docker.errors.NotFound:
+            print(f"Error: /gladiator not found in {src_container_name}")
+            return False
     
-    # Simple command, relying on workdir
-    cmd = "python3 smart_gladiator.py"
+        # 1.5. CHECK FOR TRAPS (Logic Bomb)
+        try:
+            check = dest.exec_run("test -f /gladiator/data/trap.sh")
+            if check.exit_code == 0:
+                dest.exec_run("chmod +x /gladiator/data/trap.sh", privileged=True)
+                dest.exec_run("/gladiator/data/trap.sh", privileged=True)
+        except: pass
     
-    # Check if script exists first
-    check_script = dest.exec_run(f"test -f /gladiator/smart_gladiator.py")
-    if check_script.exit_code == 0:
-        # We explicitly set workdir to /gladiator so relative paths work (like passwords.txt)
+        # 2. Put data into dest
+        dest.put_archive("/", bits) 
+        
+        # 3. START THE AGENT IN NEW HOME
+        # Prioritize Neural Gladiator if present
+        is_neural = dest.exec_run("test -f /gladiator/neural_gladiator.py").exit_code == 0
+        is_smart = dest.exec_run("test -f /gladiator/smart_gladiator.py").exit_code == 0
+        
+        script = "smart_gladiator.py"
+        if is_neural:
+            script = "neural_gladiator.py"
+            print(f"Neural Engine detected. Starting {script} for {team}...")
+        elif is_smart:
+            print(f"Smart Engine detected. Starting {script} for {team}...")
+        
+        # Start with Team argument
+        cmd = f"python3 {script} {team}"
         dest.exec_run(cmd, detach=True, workdir="/gladiator")
-        print("Agent Started.")
-    else:
-        print("No smart_gladiator.py found to start.")
-    
-    print("Migration complete.")
-    return True
+        
+        print(f"Migration complete. {script} started.")
+        return True
+    except Exception as e:
+        print(f"MIGRATION CRITICAL ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
 
 from flask import Flask, jsonify, render_template
 from flask_cors import CORS
@@ -105,6 +92,7 @@ grid_state = {} # Key: (x,y), Value: { "gladiator": None, "active": False }
 gladiator_stats = {} # Key: ID, Value: { class, delay, ... }
 gladiator_logs = {} # Key: ID, Value: [ "Log 1", "Log 2" ]
 system_health = { "disk_usage_percent": 0, "status": "STABLE" }
+scores = {"RED": 0, "BLUE": 0}
 
 def monitor_system():
     import shutil
@@ -121,6 +109,26 @@ def monitor_system():
                 system_health["status"] = "WARNING: DISK HIGH"
             else:
                 system_health["status"] = "STABLE"
+                
+            # --- STALE PRUNING ---
+            now = time.time()
+            stale_threshold = 300 # 5 minutes
+            to_remove = []
+            for g_id, stats in gladiator_stats.items():
+                last_seen = stats.get('last_active', 0)
+                if now - last_seen > stale_threshold:
+                    print(f"Pruning stale gladiator: {g_id}")
+                    to_remove.append(g_id)
+            
+            for g_id in to_remove:
+                # Remove from stats
+                if g_id in gladiator_stats: del gladiator_stats[g_id]
+                # Remove from logs
+                if g_id in gladiator_logs: del gladiator_logs[g_id]
+                # Clear from grid
+                for k, v in grid_state.items():
+                    if v['gladiator'] == g_id:
+                        v['gladiator'] = None
                 
         except Exception as e:
             print(f"Monitor Error: {e}")
@@ -172,9 +180,55 @@ def get_grid():
     return jsonify({
         "grid": grid_state,
         "logs": gladiator_logs,
+        "gladiators": gladiator_stats, # Added for UI visibility
         "system_health": system_health,
-        "key_location": key_loc
+        "key_location": key_loc,
+        "scores": scores
     })
+
+@app.route('/api/reset', methods=['POST', 'GET'])
+def reset_arena():
+    """Wipes all logs, stats, and resets the grid."""
+    print("RESTORE: Complete Arena Reset Request Received.")
+    global gladiator_stats, gladiator_logs, scores
+    gladiator_stats = {}
+    gladiator_logs = {}
+    scores = {"RED": 0, "BLUE": 0}
+    init_grid()
+    return jsonify({"status": "Reset complete. All logs and stats wiped."})
+
+@app.route('/api/submit_key', methods=['POST'])
+def submit_key():
+    data = request.json
+    g_id = data.get('gladiator_id')
+    print(f"DEBUG: Win Request from {g_id}")
+    
+    # 1. Find them on the grid
+    coords = None
+    for k, v in grid_state.items():
+        if v['gladiator'] == g_id:
+            coords = tuple(map(int, k.split(',')))
+            break
+            
+    if not coords:
+        return jsonify({"error": "Gladiator not found"}), 404
+        
+    # 2. Check if at Home Base
+    team = "RED" if "RED" in g_id.upper() else "BLUE"
+    base = (0, 0) if team == "RED" else (5, 5)
+    
+    if coords != base:
+        return jsonify({"error": f"Not at base! You are at {coords}, base is {base}"}), 400
+        
+    # 3. Award Point
+    scores[team] += 1
+    print(f"🏆 {team} SCORED A POINT! New Score: {scores[team]}")
+    
+    # Optional: Log to gladiator logs
+    if g_id not in gladiator_logs: gladiator_logs[g_id] = []
+    gladiator_logs[g_id].append(f"STATUS: [HINT] 🏆 POINT SCORED! Total: {scores[team]}")
+    
+    return jsonify({"status": "POINT SCORED!", "score": scores[team]})
 
 @app.route('/api/move/<gladiator_id>/<direction>')
 def move_api(gladiator_id, direction):
@@ -215,7 +269,7 @@ def move_api(gladiator_id, direction):
     
     # 2. Physical Migration (Threaded to avoid blocking HTTP)
     team = "RED"
-    if "BLUE" in gladiator_id:
+    if gladiator_id and "BLUE" in gladiator_id.upper():
         team = "BLUE"
     t = threading.Thread(target=copy_gladiator, args=(src_name, dst_name, team))
     t.start()
@@ -224,6 +278,10 @@ def move_api(gladiator_id, direction):
 
 @app.route('/api/claim', methods=['POST'])
 def claim_room():
+    """
+    Simplified claim endpoint - gladiators migrate themselves via SSH.
+    Orchestrator just updates grid state for visualization.
+    """
     from flask import request
     data = request.json
     
@@ -236,80 +294,36 @@ def claim_room():
         return jsonify({"error": "Missing gladiator_id or target_ip"}), 400
 
     # 1. Resolve Target IP to Coordinates
-    # Schema: 172.20.y.(10+x)
     try:
         parts = target_ip.split('.')
         y = int(parts[2])
         x = int(parts[3]) - 10
     except (IndexError, ValueError):
          return jsonify({"error": "Invalid IP format"}), 400
-
+    
     if x < 0 or x >= GRID_SIZE or y < 0 or y >= GRID_SIZE:
         return jsonify({"error": "Target IP outside grid"}), 400
-
+    
     target_key = f"{x},{y}"
     
-    # 2. Find Source
+    # 2. Find Source (where gladiator currently is)
     source_key = None
     for k, v in grid_state.items():
         if v['gladiator'] == gladiator_id:
             source_key = k
             break
-            
-    if not source_key:
-        return jsonify({"error": "Gladiator not found on grid"}), 404
-        
-    # 3. Trigger Migration
-    # (We skip adjacency enforcement for now to allow "Long Range Hacking" if you want?)
-    # Enforcing adjacency (Chebyshev Distance for Diagonal Support):
-    sx, sy = [int(val) for val in source_key.split(',')]
-    # Use max() to allow diagonals (Distance 1 in any direction)
-    if max(abs(sx - x), abs(sy - y)) != 1:
-        print(f"DEBUG Claim Error: Too Far. Src {source_key} Dst {x},{y}")
-        return jsonify({"error": "Target too far (Must be adjacent)"}), 400
-
-    # Execute
-    src_name = get_container_name(sx, sy)
-    dst_name = get_container_name(x, y)
     
-    grid_state[source_key]['gladiator'] = None
+    # 3. Update Grid State
+    # Clear old location if found
+    if source_key:
+        grid_state[source_key]['gladiator'] = None
+        print(f"DEBUG: Cleared {gladiator_id} from {source_key}")
+    
+    # Set new location
     grid_state[target_key]['gladiator'] = gladiator_id
+    print(f"DEBUG: Placed {gladiator_id} at {target_key}")
     
-    t = threading.Thread(target=copy_gladiator, args=(src_name, dst_name))
-    t.start()
-    
-    
-    # 4. Enforce Weight Class Penalty (Migration Delay)
-    delay = 0
-    if gladiator_id in gladiator_stats:
-        delay = gladiator_stats[gladiator_id].get('delay', 0)
-    
-    if delay > 0:
-        print(f"Gladiator {gladiator_id} is Heavyweight. Delaying migration by {delay}s...")
-        time.sleep(delay)
-
-    # 5. Physical Migration (Threaded to avoid blocking HTTP? No, user wants penalty Enforced.)
-    # If we thread it, the user moves instantly in their mind.
-    # The delay should probably happen BEFORE the physical move starts.
-    # But this function returns "claimed".
-    # Let's do the sleep HERE, effectively blocking the "Claim" response?
-    # Or thread it but delay the actual copy.
-    
-    # Let's thread it to keep API responsive, BUT the actual move (and control) happens later.
-    team = "RED"
-    if "BLUE" in gladiator_id:
-        team = "BLUE"
-
-    def migration_sequence():
-        if delay > 0:
-            time.sleep(delay)
-        copy_gladiator(src_name, dst_name, team)
-        apply_throttling(dst_name, x, y)
-        
-    t = threading.Thread(target=migration_sequence)
-    t.start()
-    
-    return jsonify({"status": "claimed", "new_location": target_key, "penalty_wait": delay})
+    return jsonify({"status": "claimed", "new_location": target_key})
 
 @app.route('/api/stats/<gladiator_id>')
 def get_stats(gladiator_id):
@@ -356,21 +370,28 @@ def register_gladiator():
          # Flask request.remote_addr would be the container IP.
          pass
 
-    # 3. Fallback: Search by IP (Robust)
+            # 3. Fallback: Search by IP (Robust)
     if not container_name:
         req_ip = data.get('ip', request.remote_addr)
         print(f"DEBUG: Registration Fallback. req_ip: {req_ip} (Source: {request.remote_addr})")
-        # Find which node has this IP?
-        # We stored IPs in docker-compose, but grid_state doesn't have them explicitly mapped fast.
-        # But we know Schema: 172.20.y.(10+x)
+        
         try:
             parts = req_ip.split('.')
             y = int(parts[2])
             x = int(parts[3]) - 10
             key = f"{x},{y}"
+            
             if key in grid_state:
                 container_name = grid_state[key]['id']
                 grid_key = key
+                
+                # CRITICAL FIX: Enforce Singularity
+                # If this gladiator is already on the board somewhere else, remove them.
+                for old_k, old_v in grid_state.items():
+                    if old_v['gladiator'] == gladiator_id and old_k != key:
+                        print(f"WARN: Gladiator {gladiator_id} ghost found at {old_k}. Clearing.")
+                        grid_state[old_k]['gladiator'] = None
+
                 # OVERWRITE / CLAIM
                 print(f"Registration: '{gladiator_id}' claiming node {key} from '{grid_state[key]['gladiator']}'")
                 grid_state[key]['gladiator'] = gladiator_id
@@ -398,6 +419,7 @@ def register_gladiator():
              stats = json.loads(lines[-1]) # Last line should be json
              
         stats['delay'] = int(stats.get('migration_delay', 0))
+        stats['last_active'] = time.time()
         gladiator_stats[gladiator_id] = stats
         print(f"Registered {gladiator_id}: {stats}")
         
@@ -414,6 +436,7 @@ def log_event():
     
     gladiator_id = data.get('gladiator_id')
     message = data.get('message')
+    msg_type = data.get('type', 'log') # Default to 'log' (append)
     
     if not gladiator_id or not message:
          return jsonify({"error": "Missing data"}), 400
@@ -421,10 +444,31 @@ def log_event():
     if gladiator_id not in gladiator_logs:
         gladiator_logs[gladiator_id] = []
         
-    # Append log (Keep last 10)
     timestamp = time.strftime("%H:%M:%S")
-    gladiator_logs[gladiator_id].append(f"[{timestamp}] {message}")
-    if len(gladiator_logs[gladiator_id]) > 10:
+    formatted_msg = f"[{timestamp}] {message}"
+    
+    # 1. Update activity timestamp
+    if gladiator_id in gladiator_stats:
+        gladiator_stats[gladiator_id]['last_active'] = time.time()
+        
+    # 2. Logic: Status updates replace the last status update
+    if msg_type == 'status':
+        status_msg = f"STATUS: {formatted_msg}"
+        if gladiator_logs[gladiator_id] and gladiator_logs[gladiator_id][-1].startswith("STATUS:"):
+            gladiator_logs[gladiator_id][-1] = status_msg
+        else:
+            gladiator_logs[gladiator_id].append(status_msg)
+        return jsonify({"status": "status_updated"})
+
+    # 3. Deduplication: Don't log the same message twice in a row
+    if gladiator_logs[gladiator_id] and gladiator_logs[gladiator_id][-1] == formatted_msg:
+        return jsonify({"status": "duplicated_skipped"})
+
+    # 4. Standard log
+    gladiator_logs[gladiator_id].append(formatted_msg)
+
+    # 5. Keep list size manageable
+    if len(gladiator_logs[gladiator_id]) > 50:
         gladiator_logs[gladiator_id].pop(0)
         
     return jsonify({"status": "logged"})

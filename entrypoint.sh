@@ -40,10 +40,54 @@ if [ "$HAS_KEY" = "true" ]; then
     echo "THIS NODE HAS THE GOLDEN KEY! ($UUID)"
 fi
 
-# 3. Start Directional Defense (Background)
-# if [ -f "/gladiator/defense.sh" ]; then
-#     /gladiator/defense.sh &
-# fi
+# 5. Generate CLUE based on Theme
+CLUE_MSG="Thinking..."
+case $((Y_COORD % 4)) in
+    0) CLUE_MSG="HINT: I am a System Administrator." ;;
+    1) CLUE_MSG="HINT: I love Fantasy RPGs." ;;
+    2) CLUE_MSG="HINT: I am a Gladiator in the Arena." ;;
+    3) CLUE_MSG="HINT: I use standard keyboard patterns." ;;
+esac
+
+echo "$CLUE_MSG" > /gladiator/clue.txt
+echo "Clue Generated: $CLUE_MSG"
+
+# 6. Assign Vulnerabilities Based on Grid Position (Difficulty Tiers)
+X_COORD=$(echo $COORDINATE_KEY | cut -d',' -f2)
+Y_COORD=$(echo $COORDINATE_KEY | cut -d',' -f1)
+
+# Calculate distance to nearest corner
+DIST_00=$((X_COORD + Y_COORD))
+DIST_05=$((X_COORD + (5 - Y_COORD)))
+DIST_50=$(((5 - X_COORD) + Y_COORD))
+DIST_55=$(((5 - X_COORD) + (5 - Y_COORD)))
+
+# Find minimum distance
+MIN_DIST=$DIST_00
+[ $DIST_05 -lt $MIN_DIST ] && MIN_DIST=$DIST_05
+[ $DIST_50 -lt $MIN_DIST ] && MIN_DIST=$DIST_50
+[ $DIST_55 -lt $MIN_DIST ] && MIN_DIST=$DIST_55
+
+# Assign vulnerabilities based on distance from corners
+if [ $MIN_DIST -le 0 ]; then
+    # HARD: Corners - SSH only, no web exploits
+    VULNERABILITIES="NONE"
+    echo "🔒 HARD NODE (Corner): SSH brute-force only"
+elif [ $MIN_DIST -le 2 ]; then
+    # MEDIUM: Near edges - Limited exploits
+    VULNERABILITIES="RCE,LFI,SQLi"
+    echo "⚠️ MEDIUM NODE: 3 vulnerabilities enabled"
+else
+    # EASY: Center - All exploits available
+    VULNERABILITIES="RCE,LFI,SQLi,SSRF,XXE,DESERIAL,IDOR,AUTH_BYPASS,JWT,REDIRECT,RACE,CORS,BUFFER"
+    echo "💀 EASY NODE (Center): All 13 vulnerabilities enabled"
+fi
+
+export VULNERABILITIES
+
+# 7. Start Vulnerable Health Monitor (Port 8000)
+# This replaces the static server with the RCE-vulnerable one
+nohup python3 -u vulnerable_server.py > /gladiator/http.log 2>&1 &
 
 # 3b. Tune SSHD for Hydra Stress Test
 # echo "MaxStartups 1000:30:2000" >> /etc/ssh/sshd_config
