@@ -223,7 +223,8 @@ hacking_brain = {
         "raw": 1.0,
         "digit_1": 1.0,
         "digit_2": 1.0
-    }
+    },
+    "known_passwords": {} # IP -> Password mapping (Literal Memory)
 }
 
 THEMES = {
@@ -462,9 +463,13 @@ def attempt_login(pwd, target_ip):
             pass
     return None
 
-def learn_from_hack(password):
+def learn_from_hack(password, target_ip):
     global hacking_brain
-    # Identify which theme and mutation was successful
+    # 1. Literal Memory: Store for instant re-entry
+    hacking_brain["known_passwords"][target_ip] = password
+    log(f"🧠 Memory Saved: {target_ip} -> {password}")
+    
+    # 2. Generalization: Learn themes/patterns
     found_theme = None
     for theme, words in THEMES.items():
         for word in words:
@@ -491,6 +496,17 @@ def learn_from_hack(password):
 def action_hack(target):
     log(f"⚔️ Action: HACK {target['ip']}")
     
+    # 0. Check Literal Memory first (Instant Win)
+    if target['ip'] in hacking_brain["known_passwords"]:
+        known_pwd = hacking_brain["known_passwords"][target['ip']]
+        log(f"🧠 RECALL: Known password for {target['ip']} found in memory.")
+        if attempt_login(known_pwd, target['ip']):
+            log(f"🔓 RE-ENTRY SUCCESS: {known_pwd}")
+            return known_pwd
+        else:
+            log(f"⚠️ RE-ENTRY FAILED: Password for {target['ip']} may have rotated. Re-learning...")
+            del hacking_brain["known_passwords"][target['ip']]
+
     # 1. Build prioritized guess list based on Brain weights
     theme_priority = sorted(hacking_brain["themes"].items(), key=lambda x: x[1], reverse=True)
     mutation_priority = sorted(hacking_brain["mutations"].items(), key=lambda x: x[1], reverse=True)
@@ -605,6 +621,7 @@ def main():
             if password:
                 reward = 50
                 log("💰 REWARD: Hack Success!")
+                learn_from_hack(password, target['ip'])
                 
                 # DECISION: CLAIM, CRASH, or SLOW?
                 if is_occupied(target['ip']):
