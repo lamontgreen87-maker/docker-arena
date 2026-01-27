@@ -21,18 +21,16 @@
 
         #arena {
             display: grid;
-            grid-template-columns: repeat(6, 60px) !important;
-            grid-gap: 5px;
-            max-width: 390px;
-            /* (60+5)*6 roughly */
-            margin: 0 auto;
+            grid-template-columns: repeat(3, 100px);
+            /* 3x3 Grid */
+            grid-gap: 10px;
         }
 
         .node {
-            width: 60px;
-            height: 60px;
+            width: 100px;
+            height: 100px;
             background: #161b22;
-            border: 1px solid #30363d;
+            border: 2px solid #30363d;
             display: flex;
             flex-direction: column;
             justify-content: center;
@@ -41,18 +39,18 @@
         }
 
         .node .id {
-            font-size: 0.6em;
+            font-size: 0.8em;
             color: #8b949e;
         }
 
         .node.active {
             border-color: #58a6ff;
-            box-shadow: 0 0 5px #58a6ff44;
+            box-shadow: 0 0 10px #58a6ff44;
         }
 
         .gladiator {
-            width: 40px;
-            height: 40px;
+            width: 60px;
+            height: 60px;
             background: #238636;
             border-radius: 50%;
             display: flex;
@@ -66,27 +64,6 @@
         .gladiator.enemy {
             background: #da3633;
         }
-
-        .gladiator.spartacus {
-            background: #bf39d6;
-            border: 2px solid #ffd700;
-            box-shadow: 0 0 5px #bf39d6;
-            font-size: 0.6em;
-        }
-
-        .gladiator.blue-team {
-            background: #007bff !important;
-            border: 1px solid #ffffff !important;
-            box-shadow: 0 0 10px #007bff !important;
-            font-size: 0.6em;
-        }
-
-        .gladiator.red-team {
-            background: #da3633 !important;
-            border: 1px solid #ffffff !important;
-            box-shadow: 0 0 10px #da3633 !important;
-            font-size: 0.6em;
-        }
     </style>
 </head>
 
@@ -94,7 +71,7 @@
 
     <div id="container" style="display: flex; flex-direction: row; gap: 20px;">
         <div id="arena-container">
-            <h1>Arena Visualizer V5: TIGHT GRID</h1>
+            <h1>Arena Visualizer (4x4)</h1>
             <div id="status">Loading...</div>
             <div id="arena"></div>
         </div>
@@ -109,17 +86,15 @@
         async function fetchGrid() {
             const statusDiv = document.getElementById('status');
             try {
-                // Use random query param to bust cache
-                const res = await fetch('/api/grid?t=' + Date.now());
+                const res = await fetch('/api/grid');
                 if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
                 const data = await res.json();
-                console.log("DEBUG: API Response:", data); // Explicit Debug Log
 
                 // Handle new wrapper format { grid: ..., logs: ... } 
+                // or fallback for old format if something goes wrong
                 const gridData = data.grid || data;
                 const logData = data.logs || {};
                 const keyLoc = data.key_location;
-                console.log("DEBUG: keyLoc extracted:", keyLoc);
 
                 statusDiv.innerText = `Connected. Grid Size: ${Object.keys(gridData).length} nodes`;
                 renderGrid(gridData, keyLoc);
@@ -168,7 +143,7 @@
             const cols = maxX + 1;
             const rows = maxY + 1;
 
-            arena.style.gridTemplateColumns = `repeat(${cols}, 60px)`;
+            arena.style.gridTemplateColumns = `repeat(${cols}, 100px)`;
 
             for (let y = 0; y < rows; y++) {
                 for (let x = 0; x < cols; x++) {
@@ -183,22 +158,8 @@
                         if (cell.gladiator) {
                             const gladDiv = document.createElement('div');
                             gladDiv.className = 'gladiator';
-
-                            let gladName = cell.gladiator.toUpperCase();
-                            if (gladName.includes('BLUE')) {
-                                gladDiv.classList.add('blue-team');
-                                gladDiv.innerText = 'BLUE';
-                            } else if (gladName.includes('RED')) {
-                                gladDiv.classList.add('red-team');
-                                gladDiv.innerText = 'RED';
-                            } else if (gladName === 'SPARTACUS') {
-                                gladDiv.classList.add('spartacus');
-                                gladDiv.innerText = 'SPART';
-                            } else {
-                                if (cell.gladiator !== 'Glad_A') gladDiv.classList.add('enemy');
-                                gladDiv.innerText = cell.gladiator.substring(0, 2);
-                            }
-
+                            if (cell.gladiator !== 'Glad_A') gladDiv.classList.add('enemy');
+                            gladDiv.innerText = cell.gladiator.substring(0, 2); // Show first 2 chars
                             nodeDiv.appendChild(gladDiv);
                             nodeDiv.classList.add('active');
 

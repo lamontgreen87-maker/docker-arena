@@ -17,7 +17,7 @@ import os
 
 client = docker.from_env()
 
-GRID_SIZE = 4
+GRID_SIZE = int(os.environ.get("GRID_SIZE", 6))
 CONTAINER_PREFIX = "arena"
 
 def get_container_name(x, y):
@@ -34,17 +34,61 @@ def copy_gladiator(src_container_name, dest_container_name):
     src = client.containers.get(src_container_name)
     dest = client.containers.get(dest_container_name)
 
-    # 1. Get the data from source
-    # We grab /gladiator/data from the source
+    # Safety sleep to ensure memory.json is flushed to disk by the agent
+    time.sleep(1.0)
+
+    # 1. Get the data from source (and the script!)
+    # We grab /gladiator which contains both /data and smart_gladiator.py (if deployed there)
     try:
-        bits, stat = src.get_archive("/gladiator/data")
+        bits, stat = src.get_archive("/gladiator")
     except docker.errors.NotFound:
-        print(f"Error: /gladiator/data not found in {src_container_name}")
+        print(f"Error: /gladiator not found in {src_container_name}")
         return False
 
+    # 1.5. CHECK FOR TRAPS (Logic Bomb)
+    # The Trap must exist in the DESTINATION before the new agent arrives.
+    try:
+        # Check if trap.sh exists
+        check = dest.exec_run("test -f /gladiator/data/trap.sh")
+        if check.exit_code == 0:
+            print(f"⚠️ TRAP DETECTED in {dest_container_name}! Executing Logic Bomb...")
+            
+            # Execute the trap
+            dest.exec_run("chmod +x /gladiator/data/trap.sh", privileged=True)
+            process = dest.exec_run("/gladiator/data/trap.sh", privileged=True)
+            
+            print(f"💥 TRAP DETONATED: {process.output.decode()}")
+            
+            # If the trap killed the container, we fail.
+            dest.reload()
+            if dest.status != 'running':
+                print("💀 TRAP KILLED THE CONTAINER!")
+                return False
+                
+    except Exception as e:
+        print(f"Trap Error: {e}")
+
     # 2. Put data into dest
-    # put_archive expects a tar stream
-    dest.put_archive("/gladiator", bits) 
+    dest.put_archive("/", bits) 
+    
+    # 3. START THE AGENT IN NEW HOME
+    # We look for smart_gladiator.py. If it exists, run it.
+    # Note: We run detached so we don't block.
+    # We rely on the script being at /gladiator/smart_gladiator.py
+    
+    print(f"Starting agent in {dest_container_name}...")
+    
+    # Simple command, relying on workdir
+    cmd = "python3 smart_gladiator.py"
+    
+    # Check if script exists first
+    check_script = dest.exec_run(f"test -f /gladiator/smart_gladiator.py")
+    if check_script.exit_code == 0:
+        # We explicitly set workdir to /gladiator so relative paths work (like passwords.txt)
+        dest.exec_run(cmd, detach=True, workdir="/gladiator")
+        print("Agent Started.")
+    else:
+        print("No smart_gladiator.py found to start.")
     
     print("Migration complete.")
     return True
@@ -84,15 +128,15 @@ def monitor_system():
         time.sleep(30)
 
 def init_grid():
+    print("DEBUG: Initializing Grid (Resetting all nodes to None)")
+    global grid_state
+    grid_state = {}
     for x in range(GRID_SIZE):
         for y in range(GRID_SIZE):
             grid_state[f"{x},{y}"] = {
                 "id": get_container_name(x, y),
                 "gladiator": None
             }
-    # Initial Test: Put Gladiator A in 0,0 and B in 2,2
-    grid_state["0,0"]["gladiator"] = "Glad_A"
-    grid_state["2,2"]["gladiator"] = "Glad_B"
 
 def check_arena_health():
     """Monitor for crashed containers (Forfeit Condition)"""
@@ -107,6 +151,16 @@ def check_arena_health():
             except docker.errors.NotFound:
                 print(f"CRITICAL: Container {name} is missing!")
 
+
+@app.after_request
+def add_header(r):
+    """
+    Force no-caching for all responses to ensure the latest UI is always served.
+    """
+    r.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    r.headers["Pragma"] = "no-cache"
+    r.headers["Expires"] = "0"
+    return r
 
 @app.route('/')
 def home():
@@ -160,8 +214,10 @@ def move_api(gladiator_id, direction):
     grid_state[dest_key]['gladiator'] = gladiator_id
     
     # 2. Physical Migration (Threaded to avoid blocking HTTP)
-    # In a real game, we might want this synchronous or have a "traveling" state
-    t = threading.Thread(target=copy_gladiator, args=(src_name, dst_name))
+    team = "RED"
+    if "BLUE" in gladiator_id:
+        team = "BLUE"
+    t = threading.Thread(target=copy_gladiator, args=(src_name, dst_name, team))
     t.start()
 
     return jsonify({"status": "moved", "from": f"{x},{y}", "to": f"{new_x},{new_y}"})
@@ -173,8 +229,10 @@ def claim_room():
     
     gladiator_id = data.get('gladiator_id')
     target_ip = data.get('target_ip')
+    print(f"DEBUG: Claim Request: {gladiator_id} -> {target_ip}")
     
     if not gladiator_id or not target_ip:
+        print("DEBUG Claim Error: Missing fields")
         return jsonify({"error": "Missing gladiator_id or target_ip"}), 400
 
     # 1. Resolve Target IP to Coordinates
@@ -203,9 +261,11 @@ def claim_room():
         
     # 3. Trigger Migration
     # (We skip adjacency enforcement for now to allow "Long Range Hacking" if you want?)
-    # Enforcing adjacency:
+    # Enforcing adjacency (Chebyshev Distance for Diagonal Support):
     sx, sy = [int(val) for val in source_key.split(',')]
-    if abs(sx - x) + abs(sy - y) != 1:
+    # Use max() to allow diagonals (Distance 1 in any direction)
+    if max(abs(sx - x), abs(sy - y)) != 1:
+        print(f"DEBUG Claim Error: Too Far. Src {source_key} Dst {x},{y}")
         return jsonify({"error": "Target too far (Must be adjacent)"}), 400
 
     # Execute
@@ -236,10 +296,14 @@ def claim_room():
     # Or thread it but delay the actual copy.
     
     # Let's thread it to keep API responsive, BUT the actual move (and control) happens later.
+    team = "RED"
+    if "BLUE" in gladiator_id:
+        team = "BLUE"
+
     def migration_sequence():
         if delay > 0:
             time.sleep(delay)
-        copy_gladiator(src_name, dst_name)
+        copy_gladiator(src_name, dst_name, team)
         apply_throttling(dst_name, x, y)
         
     t = threading.Thread(target=migration_sequence)
@@ -255,21 +319,66 @@ def get_stats(gladiator_id):
 def register_gladiator():
     from flask import request
     data = request.json
+    print(f"DEBUG: Register Incoming from {request.remote_addr}. Data: {data}")
     gladiator_id = data.get('gladiator_id')
     
     # We need to find WHERE they are to run the exec.
     # Assuming they are already on the grid (e.g., spawn point).
     # Or they provide their current IP.
     
-    # Find container
+    gladiator_id = data.get('gladiator_id')
+    container_id_req = data.get('container_id') # Hostname from agent
+    
+    # 1. Find container by Gladiator ID (Existing)
     container_name = None
+    grid_key = None
+    
     for k, v in grid_state.items():
         if v['gladiator'] == gladiator_id:
              container_name = v['id']
+             grid_key = k
              break
-    
+             
+    # 2. If not found, try to match by Container ID (Renaming/Takeover)
+    if not container_name and container_id_req:
+         # container_id_req is likely the short ID (hostname). 
+         # grid_state stores full name 'arena_0_0'.
+         # Docker container ID usually matches hostname.
+         # But wait, grid_state v['id'] is 'arena_0_0'.
+         # We need to map hostname -> 'arena_0_0'.
+         # Actually, get_container_name returns 'arena_x_y'. 
+         # The gladiator sends socket.gethostname() which is usually the Short ID.
+         # We might need to iterate and check if 'arena_x_y' starts with the short ID (not reliable)
+         # OR simply trust that we can find the container in the grid that corresponds to this agent.
+         
+         # Better approach: The agent doesn't know its 'arena_0_0' name easily without querying Docker socket.
+         # But we (Orchestrator) know the *IP Address* of the request?
+         # Flask request.remote_addr would be the container IP.
+         pass
+
+    # 3. Fallback: Search by IP (Robust)
     if not container_name:
-         return jsonify({"error": "Gladiator not found on grid"}), 404
+        req_ip = data.get('ip', request.remote_addr)
+        print(f"DEBUG: Registration Fallback. req_ip: {req_ip} (Source: {request.remote_addr})")
+        # Find which node has this IP?
+        # We stored IPs in docker-compose, but grid_state doesn't have them explicitly mapped fast.
+        # But we know Schema: 172.20.y.(10+x)
+        try:
+            parts = req_ip.split('.')
+            y = int(parts[2])
+            x = int(parts[3]) - 10
+            key = f"{x},{y}"
+            if key in grid_state:
+                container_name = grid_state[key]['id']
+                grid_key = key
+                # OVERWRITE / CLAIM
+                print(f"Registration: '{gladiator_id}' claiming node {key} from '{grid_state[key]['gladiator']}'")
+                grid_state[key]['gladiator'] = gladiator_id
+        except:
+            pass
+
+    if not container_name:
+         return jsonify({"error": "Gladiator not found on grid (IP Mismatch)"}), 404
 
     # Run Weigh In
     try:
@@ -319,6 +428,10 @@ def log_event():
         gladiator_logs[gladiator_id].pop(0)
         
     return jsonify({"status": "logged"})
+
+@app.route('/api/logs/<gladiator_id>')
+def get_logs(gladiator_id):
+    return jsonify(gladiator_logs.get(gladiator_id, []))
 
 def apply_throttling(container_name, my_x, my_y):
     """

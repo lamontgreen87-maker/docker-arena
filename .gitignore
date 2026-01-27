@@ -1,9 +1,12 @@
 __pycache__/
 *.pyc
 *.log
-*.txt
+memory.json
+gladiator/data/q_table*.json
+gladiator/data/model/*.bin
 .idea/
 .vscode/
 venv/
 exec_out.txt
 run_out.txt
+.DS_Store

@@ -4,7 +4,7 @@ import socket
 import threading
 
 # Config
-GRID_SIZE = 8
+GRID_SIZE = int(os.environ.get("GRID_SIZE", 6))
 BASE_PORT = 9000
 # Directions: N, NE, E, SE, S, SW, W, NW
 # Offsets (dx, dy) where x is col, y is row.
@@ -35,7 +35,10 @@ def ip_to_coords(ip):
 def coords_to_ip(x, y):
     return f"172.20.{y}.{10+x}"
 
-    subprocess.run(cmd, shell=True, check=False) # check=False to avoid crashing if iptables fails (e.g. privs)
+def run_cmd(cmd):
+    try:
+        subprocess.run(cmd, shell=True, check=False)
+    except: pass
 
 def apply_rate_limiting():
     """

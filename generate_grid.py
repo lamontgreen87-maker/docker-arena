@@ -1,15 +1,25 @@
 import yaml
 import random
 
-GRID_SIZE = 4
+GRID_SIZE = 6
 SUBNET_BASE = "172.20"
 
-# Pick a random node for the Key (Flag)
-# Avoid 0,0 (Start) to make it hard
-key_x = random.randint(1, GRID_SIZE-1)
-key_y = random.randint(1, GRID_SIZE-1)
+# Balanced Key Spawning Logic
+# Home Bases: Red (0,0), Blue (5,5)
+# Neutral Zone: 2,2 to 3,3 (Central 4 nodes)
+def get_balanced_key():
+    while True:
+        x = random.randint(2, 3)
+        y = random.randint(2, 3)
+        # Verify distance balance
+        dist_red = x + y
+        dist_blue = (GRID_SIZE-1 - x) + (GRID_SIZE-1 - y)
+        if abs(dist_red - dist_blue) <= 1:
+            return x, y
+
+key_x, key_y = get_balanced_key()
 key_coords = f"{key_x},{key_y}"
-print(f"THE KEY IS AT: {key_x}, {key_y}")
+print(f"THE KEY IS AT: {key_x}, {key_y} (Balanced)")
 
 compose = {
     "version": "3.8",
@@ -49,7 +59,9 @@ for y in range(GRID_SIZE):
                 }
             },
             "environment": [
-                f"HAS_KEY={has_key}"
+                f"HAS_KEY={has_key}",
+                f"GRID_SIZE={GRID_SIZE}",
+                f"COORDINATE_KEY={y},{x}"
             ],
             "cap_add": ["NET_ADMIN"],
             "restart": "unless-stopped",
@@ -71,7 +83,8 @@ compose["services"]["orchestrator"] = {
     },
     "container_name": "arena_orchestrator",
     "environment": [
-        f"KEY_LOCATION={key_coords}"
+        f"KEY_LOCATION={key_coords}",
+        f"GRID_SIZE={GRID_SIZE}"
     ],
     "volumes": [
         "/var/run/docker.sock:/var/run/docker.sock"

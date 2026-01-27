@@ -35,6 +35,7 @@ COPY passwords.txt .
 COPY entrypoint.sh .
 COPY directional_defense.py .
 COPY weigh_in.py .
+COPY smart_gladiator.py .
 RUN chmod +x entrypoint.sh
 
 # Keep container running via entrypoint

