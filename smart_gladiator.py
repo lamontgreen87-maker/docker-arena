@@ -234,29 +234,60 @@ THEMES = {
     "mixed": ["qwerty", "123456", "security"]
 }
 
+import base64
+
+def scramble(data_str):
+    # Team-based XOR Scrambling (The Shield)
+    key = TEAM
+    scrambled = "".join([chr(ord(c) ^ ord(key[i % len(key)])) for i, c in enumerate(data_str)])
+    return base64.b64encode(scrambled.encode()).decode()
+
+def unscramble(scrambled_b64):
+    try:
+        key = TEAM
+        decoded = base64.b64decode(scrambled_b64).decode()
+        unscrambled = "".join([chr(ord(c) ^ ord(key[i % len(key)])) for i, c in enumerate(decoded)])
+        return unscrambled
+    except:
+        log("🛡️ SECURITY ALERT: Memory decryption failed! Rival data or corruption detected.")
+        return None
+
 def load_memory():
     global visited, has_key, TEAM, hacking_brain
     if os.path.exists(MEMORY_FILE):
         try:
             with open(MEMORY_FILE, 'r') as f:
-                data = json.load(f)
+                raw_data = f.read().strip()
+                
+                # Try unscrambling first
+                un_json = unscramble(raw_data)
+                if un_json:
+                    data = json.loads(un_json)
+                else:
+                    # Fallback for old/unencrypted files
+                    data = json.loads(raw_data)
+                
                 visited = set(data.get('visited', []))
                 has_key = data.get('has_key', False)
                 hacking_brain = data.get('hacking_brain', hacking_brain)
-                # Load Team from Memory if exists (Persist Identity)
+                
                 if 'team' in data:
                     TEAM = data['team']
-                print(f"Loaded memory. Visited: {len(visited)} Key: {has_key} Brain: {hacking_brain}")
-        except: pass
+                
+                log(f"🧠 Memory Decrypted & Loaded. Shield: ACTIVE.")
+        except Exception as e:
+            log(f"⚠️ Memory Load Error: {e}")
 
 def save_memory():
     with open(MEMORY_FILE, 'w') as f:
-        json.dump({
+        data_json = json.dumps({
             "visited": list(visited), 
             "has_key": has_key, 
             "team": TEAM,
             "hacking_brain": hacking_brain
-        }, f)
+        })
+        # Scramble before saving
+        f.write(scramble(data_json))
 
 def check_for_key():
     global has_key, visited
