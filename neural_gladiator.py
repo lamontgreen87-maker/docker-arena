@@ -5,6 +5,7 @@ import json
 import requests
 import subprocess
 import random
+import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 
 # Forced Fallback: PyTorch is too heavy for 256MB nodes
@@ -109,10 +110,60 @@ if HAS_TORCH:
             return self.network(x)
 else:
     class NeuralPredictor:
-        def __init__(self, *args, **kwargs): pass
-        def to(self, device): return self
+        def __init__(self, input_dim=4, hidden_dim=32):
+            self.input_dim = input_dim
+            self.hidden_dim = hidden_dim
+            # Weights: (3 layers total as per NeuralPredictor)
+            self.weights = {
+                'w1': np.zeros((input_dim, hidden_dim)),
+                'b1': np.zeros(hidden_dim),
+                'w2': np.zeros((hidden_dim, hidden_dim)),
+                'b2': np.zeros(hidden_dim),
+                'w3': np.zeros((hidden_dim, 7)),
+                'b3': np.zeros(7)
+            }
+
+        def relu(self, x):
+            return np.maximum(0, x)
+
+        def forward(self, x):
+            # x shape should be (1, input_dim)
+            h1 = self.relu(np.dot(x, self.weights['w1']) + self.weights['b1'])
+            h2 = self.relu(np.dot(h1, self.weights['w2']) + self.weights['b2'])
+            out = np.dot(h2, self.weights['w3']) + self.weights['b3']
+            return out
+
+        def load_from_json(self, path):
+            if not os.path.exists(path): return False
+            try:
+                with open(path, 'r') as f:
+                    data = json.load(f)
+                    for k in self.weights:
+                        if k in data:
+                            self.weights[k] = np.array(data[k])
+                return True
+            except: return False
+
+        def load_state_dict(self, state_dict):
+            # Compatibility with torch state_dict
+            mapping = {
+                'network.0.weight': ('w1', True),
+                'network.0.bias': ('b1', False),
+                'network.2.weight': ('w2', True),
+                'network.2.bias': ('b2', False),
+                'network.4.weight': ('w3', True),
+                'network.4.bias': ('b3', False)
+            }
+            for torch_k, (np_k, transpose) in mapping.items():
+                if torch_k in state_dict:
+                    val = state_dict[torch_k]
+                    if hasattr(val, 'cpu'): val = val.cpu().numpy()
+                    self.weights[np_k] = val.T if transpose else val
+            return True
+
         def eval(self): pass
         def train(self): pass
+        def to(self, device): return self
 
 # --- GLOBAL STATE ---
 if HAS_TORCH:
@@ -135,27 +186,75 @@ MUTATIONS = {
     2: "digit_2"
 }
 
+MEMORY_JSON_FILE = "neural_memory.json"
+
 def init_neural_engine():
     global model, optimizer
-    if not HAS_TORCH:
-        log("⚠️ PyTorch not found. Falling back to simple weights.")
-        return
-
-    model = NeuralPredictor().to(device)
-    optimizer = optim.Adam(model.parameters(), lr=0.01)
-    
-    if os.path.exists(MEMORY_FILE):
-        try:
-            model.load_state_dict(torch.load(MEMORY_FILE, map_location=device))
-            log(f"🧠 NEURAL ENGINE: LOADED. Device: {device}")
-        except:
-            log("🧠 NEURAL ENGINE: INIT NEW.")
+    if HAS_TORCH:
+        model = NeuralPredictor().to(device)
+        optimizer = optim.Adam(model.parameters(), lr=0.01)
+        
+        if os.path.exists(MEMORY_FILE):
+            try:
+                model.load_state_dict(torch.load(MEMORY_FILE, map_location=device))
+                log(f"🧠 NEURAL ENGINE: LOADED (Torch). Device: {device}")
+            except:
+                log("🧠 NEURAL ENGINE: INIT NEW (Torch).")
+        else:
+            log(f"🧠 NEURAL ENGINE: ONLINE (Torch). Device: {device}")
     else:
-        log(f"🧠 NEURAL ENGINE: ONLINE. Device: {device}")
+        # NumPy Fallback
+        model = NeuralPredictor().to(device)
+        if os.path.exists(MEMORY_JSON_FILE):
+            if model.load_from_json(MEMORY_JSON_FILE):
+                log("🧠 NEURAL ENGINE: LOADED (NumPy)")
+            else:
+                log("🧠 NEURAL ENGINE: LOAD FAIL (NumPy)")
+        else:
+            log("🧠 NEURAL ENGINE: ONLINE (NumPy - Initial Weights)")
 
 def save_neural_memory():
-    if HAS_TORCH and model:
+    if not model: return
+    
+    if HAS_TORCH:
+        # Save Torch Version
         torch.save(model.state_dict(), MEMORY_FILE)
+        
+        # ALSO save JSON version for NumPy nodes to use!
+        try:
+            state = model.state_dict()
+            json_state = {}
+            for k, v in state.items():
+                json_state[k] = v.cpu().numpy().tolist()
+            
+            # Map keys to NumPyPredictor format
+            mapping = {
+                'network.0.weight': 'w1', 'network.0.bias': 'b1',
+                'network.2.weight': 'w2', 'network.2.bias': 'b2',
+                'network.4.weight': 'w3', 'network.4.bias': 'b3'
+            }
+            mapped_data = {}
+            for torch_k, np_k in mapping.items():
+                if torch_k in json_state:
+                    val = np.array(json_state[torch_k])
+                    # Torch Linear stores weights as (out_features, in_features), NumPy uses (in, out)
+                    if 'weight' in torch_k:
+                        mapped_data[np_k] = val.T.tolist()
+                    else:
+                        mapped_data[np_k] = val.tolist()
+            
+            with open(MEMORY_JSON_FILE, 'w') as f:
+                json.dump(mapped_data, f)
+        except Exception as e:
+            log(f"⚠️ Failed to export JSON weights: {e}")
+    else:
+        # Save NumPy Version
+        try:
+            serializable_weights = {k: v.tolist() for k, v in model.weights.items()}
+            with open(MEMORY_JSON_FILE, 'w') as f:
+                json.dump(serializable_weights, f)
+        except Exception as e:
+            log(f"⚠️ Failed to save NumPy weights: {e}")
 
 def get_input_tensor(x, y):
     # Normalize inputs for the network
