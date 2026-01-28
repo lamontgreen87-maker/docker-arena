@@ -154,7 +154,7 @@
 
                 statusDiv.innerText = `Connected. Grid Size: ${Object.keys(gridData).length} nodes`;
                 renderGrid(gridData, keyLoc);
-                renderLogs(logData);
+                renderLogs(logData, data);
                 renderScores(data.scores || { RED: 0, BLUE: 0 });
             } catch (e) {
                 console.error("Error fetching grid:", e);
@@ -168,7 +168,14 @@
             document.getElementById('score-blue').innerText = scores.BLUE || 0;
         }
 
-        function renderLogs(logs) {
+        async function fetchStats() {
+            try {
+                const res = await fetch('/api/grid'); // This contains logs and stats sometimes?
+                // Actually, the main grid fetch is fine.
+            } catch (e) { }
+        }
+
+        function renderLogs(logs, data) {
             const feedDiv = document.getElementById('logs');
             const tasksDiv = document.getElementById('active-tasks');
 
@@ -188,8 +195,20 @@
                 if (currentStatus) {
                     const cleanStatus = currentStatus.replace(/\[.*\]\sSTATUS:\s/, "").replace("STATUS: ", "");
                     const teamColor = id.includes("RED") ? "#da3633" : "#58a6ff";
+
+                    // Mastery & XP details
+                    const stats = data.gladiators?.[id] || {};
+                    const mastery = stats.mastery_level || 1;
+                    const xp = stats.xp || 0;
+
                     tasksHtml += `<div style="font-size: 0.85em; margin-bottom: 8px; color: #ffd700; font-weight: bold; background: #21262d; padding: 6px 10px; border-radius: 4px; border-left: 4px solid ${teamColor};">
-                        <div style="font-size: 0.7em; color: ${teamColor}; margin-bottom: 2px; text-transform: uppercase;">${id}</div>
+                        <div style="font-size: 0.7em; color: ${teamColor}; display: flex; justify-content: space-between; margin-bottom: 2px; text-transform: uppercase;">
+                            <span>${id}</span>
+                            <span>Level ${mastery}</span>
+                        </div>
+                        <div style="width: 100%; height: 3px; background: #30363d; margin-bottom: 5px;">
+                            <div style="width: ${xp}%; height: 100%; background: ${teamColor};"></div>
+                        </div>
                         ${cleanStatus}
                     </div>`;
                 }

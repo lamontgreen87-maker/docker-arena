@@ -94,6 +94,10 @@ gladiator_logs = {} # Key: ID, Value: [ "Log 1", "Log 2" ]
 system_health = { "disk_usage_percent": 0, "status": "STABLE" }
 scores = {"RED": 0, "BLUE": 0}
 
+# Migration Concurrency Control
+migration_lock = threading.Lock()
+active_migrations = {"RED": False, "BLUE": False}
+
 def monitor_system():
     import shutil
     while True:
@@ -155,9 +159,12 @@ def check_arena_health():
                 c = client.containers.get(name)
                 if c.status != 'running':
                     print(f"CRITICAL: Container {name} has crashed! Status: {c.status}")
-                    # TODO: Identify who was responsible / closest?
             except docker.errors.NotFound:
                 print(f"CRITICAL: Container {name} is missing!")
+            except docker.errors.APIError as e:
+                print(f"WARN: Docker API Error for {name}: {e}")
+            except Exception as e:
+                print(f"WARN: Unexpected health check error for {name}: {e}")
 
 
 @app.after_request
@@ -176,7 +183,7 @@ def home():
 
 @app.route('/api/grid', methods=['GET'])
 def get_grid():
-    key_loc = os.environ.get("KEY_LOCATION", "Unknown")
+    key_loc = os.environ.get("KEY_LOCATION", "2,3")
     return jsonify({
         "grid": grid_state,
         "logs": gladiator_logs,
@@ -215,7 +222,7 @@ def submit_key():
         
     # 2. Check if at Home Base
     team = "RED" if "RED" in g_id.upper() else "BLUE"
-    base = (0, 0) if team == "RED" else (5, 5)
+    base = (0, 0) if team == "RED" else (5, 5) # (X, Y)
     
     if coords != base:
         return jsonify({"error": f"Not at base! You are at {coords}, base is {base}"}), 400
@@ -276,6 +283,69 @@ def move_api(gladiator_id, direction):
 
     return jsonify({"status": "moved", "from": f"{x},{y}", "to": f"{new_x},{new_y}"})
 
+@app.route('/api/migrate', methods=['POST'])
+def migrate_api():
+    """
+    Experimental Orchestrator-Mediated Migration.
+    Bypasses unstable SSH by using Docker API.
+    """
+    data = request.json
+    g_id = data.get('gladiator_id')
+    target_ip = data.get('target_ip')
+    
+    if not g_id or not target_ip:
+        return jsonify({"error": "Missing data"}), 400
+
+    # 1. Find Source Container
+    src_container = None
+    for k, v in grid_state.items():
+        if v['gladiator'] == g_id:
+            x, y = map(int, k.split(','))
+            src_container = get_container_name(x, y)
+            break
+    
+    if not src_container:
+        return jsonify({"error": "Source gladiator not found on grid"}), 404
+
+    # 2. Resolve target IP to Container Name
+    try:
+        parts = target_ip.split('.')
+        ty = int(parts[2])
+        tx = int(parts[3]) - 10
+        dest_container = get_container_name(tx, ty)
+        
+        # 3. Perform Migration with Lock
+        team = "RED" if "RED" in g_id.upper() else "BLUE"
+        
+        with migration_lock:
+            if active_migrations[team]:
+                return jsonify({"error": f"Migration already in progress for {team}"}), 409
+            active_migrations[team] = True
+
+        def run_migration():
+            try:
+                # 4. Simulate Travel Time (Weight-based)
+                stats = gladiator_stats.get(g_id, {})
+                delay = stats.get('delay', 0)
+                if delay > 0:
+                    print(f"DEBUG: {g_id} is traveling... ({delay}s)")
+                    time.sleep(delay)
+                
+                success = copy_gladiator(src_container, dest_container, team)
+                if success:
+                    # Sync state only on success
+                    grid_state[f"{x},{y}"]['gladiator'] = None
+                    grid_state[f"{tx},{ty}"]['gladiator'] = g_id
+            finally:
+                with migration_lock:
+                    active_migrations[team] = False
+
+        threading.Thread(target=run_migration).start()
+        return jsonify({"status": "migration_started", "to": f"{tx},{ty}"})
+            
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/claim', methods=['POST'])
 def claim_room():
     """
@@ -296,8 +366,8 @@ def claim_room():
     # 1. Resolve Target IP to Coordinates
     try:
         parts = target_ip.split('.')
-        y = int(parts[2])
-        x = int(parts[3]) - 10
+        x = int(parts[2])
+        y = int(parts[3]) - 10
     except (IndexError, ValueError):
          return jsonify({"error": "Invalid IP format"}), 400
     

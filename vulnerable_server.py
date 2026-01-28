@@ -56,6 +56,10 @@ class VulnerableHandler(http.server.SimpleHTTPRequestHandler):
         elif parsed.path == "/api/cors-test":
             self.handle_cors()
         
+        # VULNERABILITY 14: Environment Variable Leak
+        elif 'ENV_LEAK' in ENABLED_VULNS and parsed.path == "/api/env":
+            self.handle_env_leak()
+        
         # Also serve static files (like clue.txt)
         else:
             super().do_GET()
@@ -141,12 +145,14 @@ class VulnerableHandler(http.server.SimpleHTTPRequestHandler):
                 "'--" in query or
                 "';--" in query):
                 # SQLi successful
-                with open('/gladiator/password_hint.txt', 'r') as f:
-                    content = f.read()
-                    if "Root Password set to:" in content:
-                        pwd = content.split("Root Password set to:")[1].strip()
-                    else:
-                        pwd = "unknown"
+                pwd = os.getenv('ROOT_PASSWORD')
+                if not pwd:
+                    with open('/gladiator/password_hint.txt', 'r') as f:
+                        content = f.read()
+                        if "Root Password set to:" in content:
+                            pwd = content.split("Root Password set to:")[1].strip()
+                        else:
+                            pwd = "unknown"
                 
                 self.send_response(200)
                 self.send_header('Content-type', 'application/json')
@@ -426,6 +432,25 @@ class VulnerableHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_header('Content-type', 'text/plain')
                 self.end_headers()
                 self.wfile.write(b"Buffer processed")
+        except Exception as e:
+            self.send_error(500, str(e))
+
+    def handle_env_leak(self):
+        """Expose all environment variables, including root password"""
+        try:
+            env_data = dict(os.environ)
+            
+            # Ensure the password is in there for exploitation
+            if os.path.exists('/gladiator/password_hint.txt'):
+                 with open('/gladiator/password_hint.txt', 'r') as f:
+                     content = f.read()
+                     if "Root Password set to:" in content:
+                         env_data['ROOT_PASSWORD'] = content.split("Root Password set to:")[1].strip()
+            
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(env_data).encode())
         except Exception as e:
             self.send_error(500, str(e))
 

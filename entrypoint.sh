@@ -28,6 +28,7 @@ fi
 
 # 2. Set it for root
 echo "root:$PASSWORD" | chpasswd
+export ROOT_PASSWORD="$PASSWORD"
 
 # 3. Log it (for debugging/verification, maybe hide this later for "Real Mode")
 echo "Container Started. Root Password set to: $PASSWORD" > /gladiator/password_hint.txt
@@ -52,38 +53,32 @@ esac
 echo "$CLUE_MSG" > /gladiator/clue.txt
 echo "Clue Generated: $CLUE_MSG"
 
-# 6. Assign Vulnerabilities Based on Grid Position (Difficulty Tiers)
-X_COORD=$(echo $COORDINATE_KEY | cut -d',' -f2)
-Y_COORD=$(echo $COORDINATE_KEY | cut -d',' -f1)
+# 6. Assign Vulnerabilities (Tiered Rebalance)
+# If VULNERABILITIES is already set (from docker-compose), respect it.
+# Otherwise, fall back to distance-based (deprecated, but safe).
+if [ -z "$VULNERABILITIES" ]; then
+    X_COORD=$(echo $COORDINATE_KEY | cut -d',' -f2)
+    Y_COORD=$(echo $COORDINATE_KEY | cut -d',' -f1)
+    DIST_00=$((X_COORD + Y_COORD))
+    DIST_05=$((X_COORD + (5 - Y_COORD)))
+    DIST_50=$(((5 - X_COORD) + Y_COORD))
+    DIST_55=$(((5 - X_COORD) + (5 - Y_COORD)))
+    MIN_DIST=$DIST_00
+    [ $DIST_05 -lt $MIN_DIST ] && MIN_DIST=$DIST_05
+    [ $DIST_50 -lt $MIN_DIST ] && MIN_DIST=$DIST_50
+    [ $DIST_55 -lt $MIN_DIST ] && MIN_DIST=$DIST_55
 
-# Calculate distance to nearest corner
-DIST_00=$((X_COORD + Y_COORD))
-DIST_05=$((X_COORD + (5 - Y_COORD)))
-DIST_50=$(((5 - X_COORD) + Y_COORD))
-DIST_55=$(((5 - X_COORD) + (5 - Y_COORD)))
-
-# Find minimum distance
-MIN_DIST=$DIST_00
-[ $DIST_05 -lt $MIN_DIST ] && MIN_DIST=$DIST_05
-[ $DIST_50 -lt $MIN_DIST ] && MIN_DIST=$DIST_50
-[ $DIST_55 -lt $MIN_DIST ] && MIN_DIST=$DIST_55
-
-# Assign vulnerabilities based on distance from corners
-if [ $MIN_DIST -le 0 ]; then
-    # HARD: Corners - SSH only, no web exploits
-    VULNERABILITIES="NONE"
-    echo "🔒 HARD NODE (Corner): SSH brute-force only"
-elif [ $MIN_DIST -le 2 ]; then
-    # MEDIUM: Near edges - Limited exploits
-    VULNERABILITIES="RCE,LFI,SQLi"
-    echo "⚠️ MEDIUM NODE: 3 vulnerabilities enabled"
-else
-    # EASY: Center - All exploits available
-    VULNERABILITIES="RCE,LFI,SQLi,SSRF,XXE,DESERIAL,IDOR,AUTH_BYPASS,JWT,REDIRECT,RACE,CORS,BUFFER"
-    echo "💀 EASY NODE (Center): All 13 vulnerabilities enabled"
+    if [ $MIN_DIST -le 0 ]; then
+        VULNERABILITIES="NONE"
+    elif [ $MIN_DIST -le 2 ]; then
+        VULNERABILITIES="RCE,LFI,SQLi"
+    else
+        VULNERABILITIES="RCE,LFI,SQLi,SSRF,XXE,DESERIAL,IDOR,AUTH_BYPASS,JWT,REDIRECT,RACE,CORS,BUFFER"
+    fi
 fi
 
 export VULNERABILITIES
+echo "Vulnerabilities Enabled: $VULNERABILITIES"
 
 # 7. Start Vulnerable Health Monitor (Port 8000)
 # This replaces the static server with the RCE-vulnerable one

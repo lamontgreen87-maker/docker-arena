@@ -43,8 +43,22 @@ if __name__ == "__main__":
     size = get_parameter_count(model_dir)
     cls, delay = assign_class(size)
     
+    # Mastery Level integration
+    mastery = 1
+    id_file = "/gladiator/identity.json"
+    if os.path.exists(id_file):
+        try:
+            with open(id_file, 'r') as f:
+                data = json.load(f)
+                mastery = data.get("mastery_level", 1)
+        except: pass
+    
+    # Reward mastery: Every level reduces delay by 1 second (min 0)
+    delay = max(0, delay - (mastery - 1))
+    
     print(json.dumps({
         "class": cls,
         "size_gb": f"{size:.2f}",
-        "migration_delay": delay
+        "migration_delay": delay,
+        "mastery_level": mastery
     }))

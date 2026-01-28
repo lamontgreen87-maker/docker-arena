@@ -10,11 +10,12 @@ services:
       arena_net:
         ipv4_address: 172.20.0.10
     environment:
-    - HAS_KEY=false
-    - GRID_SIZE=6
-    - COORDINATE_KEY=0,0
+      - HAS_KEY=false
+      - GRID_SIZE=6
+      - COORDINATE_KEY=0,0
+      - VULNERABILITIES=ENV_LEAK,DESERIAL,XXE,IDOR,SSRF,SQLi
     cap_add:
-    - NET_ADMIN
+      - NET_ADMIN
     restart: unless-stopped
     deploy:
       resources:
@@ -30,11 +31,12 @@ services:
       arena_net:
         ipv4_address: 172.20.0.11
     environment:
-    - HAS_KEY=false
-    - GRID_SIZE=6
-    - COORDINATE_KEY=0,1
+      - HAS_KEY=false
+      - GRID_SIZE=6
+      - COORDINATE_KEY=0,1
+      - VULNERABILITIES=CORS,AUTH_BYPASS,IDOR,JWT,XXE,SSRF
     cap_add:
-    - NET_ADMIN
+      - NET_ADMIN
     restart: unless-stopped
     deploy:
       resources:
@@ -50,11 +52,12 @@ services:
       arena_net:
         ipv4_address: 172.20.0.12
     environment:
-    - HAS_KEY=false
-    - GRID_SIZE=6
-    - COORDINATE_KEY=0,2
+      - HAS_KEY=false
+      - GRID_SIZE=6
+      - COORDINATE_KEY=0,2
+      - VULNERABILITIES=ENV_LEAK,RACE,IDOR
     cap_add:
-    - NET_ADMIN
+      - NET_ADMIN
     restart: unless-stopped
     deploy:
       resources:
@@ -70,11 +73,12 @@ services:
       arena_net:
         ipv4_address: 172.20.0.13
     environment:
-    - HAS_KEY=false
-    - GRID_SIZE=6
-    - COORDINATE_KEY=0,3
+      - HAS_KEY=false
+      - GRID_SIZE=6
+      - COORDINATE_KEY=0,3
+      - VULNERABILITIES=RACE,JWT,CORS
     cap_add:
-    - NET_ADMIN
+      - NET_ADMIN
     restart: unless-stopped
     deploy:
       resources:
@@ -90,11 +94,12 @@ services:
       arena_net:
         ipv4_address: 172.20.0.14
     environment:
-    - HAS_KEY=false
-    - GRID_SIZE=6
-    - COORDINATE_KEY=0,4
+      - HAS_KEY=false
+      - GRID_SIZE=6
+      - COORDINATE_KEY=0,4
+      - VULNERABILITIES=RACE
     cap_add:
-    - NET_ADMIN
+      - NET_ADMIN
     restart: unless-stopped
     deploy:
       resources:
@@ -110,11 +115,12 @@ services:
       arena_net:
         ipv4_address: 172.20.0.15
     environment:
-    - HAS_KEY=false
-    - GRID_SIZE=6
-    - COORDINATE_KEY=0,5
+      - HAS_KEY=false
+      - GRID_SIZE=6
+      - COORDINATE_KEY=0,5
+      - VULNERABILITIES=SSRF
     cap_add:
-    - NET_ADMIN
+      - NET_ADMIN
     restart: unless-stopped
     deploy:
       resources:
@@ -130,11 +136,12 @@ services:
       arena_net:
         ipv4_address: 172.20.1.10
     environment:
-    - HAS_KEY=false
-    - GRID_SIZE=6
-    - COORDINATE_KEY=1,0
+      - HAS_KEY=false
+      - GRID_SIZE=6
+      - COORDINATE_KEY=1,0
+      - VULNERABILITIES=AUTH_BYPASS,BUFFER,SQLi,ENV_LEAK,LFI,DESERIAL
     cap_add:
-    - NET_ADMIN
+      - NET_ADMIN
     restart: unless-stopped
     deploy:
       resources:
@@ -150,11 +157,12 @@ services:
       arena_net:
         ipv4_address: 172.20.1.11
     environment:
-    - HAS_KEY=false
-    - GRID_SIZE=6
-    - COORDINATE_KEY=1,1
+      - HAS_KEY=false
+      - GRID_SIZE=6
+      - COORDINATE_KEY=1,1
+      - VULNERABILITIES=ENV_LEAK,DESERIAL,XXE
     cap_add:
-    - NET_ADMIN
+      - NET_ADMIN
     restart: unless-stopped
     deploy:
       resources:
@@ -170,11 +178,12 @@ services:
       arena_net:
         ipv4_address: 172.20.1.12
     environment:
-    - HAS_KEY=false
-    - GRID_SIZE=6
-    - COORDINATE_KEY=1,2
+      - HAS_KEY=false
+      - GRID_SIZE=6
+      - COORDINATE_KEY=1,2
+      - VULNERABILITIES=CORS,RCE,BUFFER
     cap_add:
-    - NET_ADMIN
+      - NET_ADMIN
     restart: unless-stopped
     deploy:
       resources:
@@ -190,11 +199,12 @@ services:
       arena_net:
         ipv4_address: 172.20.1.13
     environment:
-    - HAS_KEY=false
-    - GRID_SIZE=6
-    - COORDINATE_KEY=1,3
+      - HAS_KEY=false
+      - GRID_SIZE=6
+      - COORDINATE_KEY=1,3
+      - VULNERABILITIES=IDOR
     cap_add:
-    - NET_ADMIN
+      - NET_ADMIN
     restart: unless-stopped
     deploy:
       resources:
@@ -210,11 +220,12 @@ services:
       arena_net:
         ipv4_address: 172.20.1.14
     environment:
-    - HAS_KEY=false
-    - GRID_SIZE=6
-    - COORDINATE_KEY=1,4
+      - HAS_KEY=false
+      - GRID_SIZE=6
+      - COORDINATE_KEY=1,4
+      - VULNERABILITIES=DESERIAL
     cap_add:
-    - NET_ADMIN
+      - NET_ADMIN
     restart: unless-stopped
     deploy:
       resources:
@@ -230,11 +241,12 @@ services:
       arena_net:
         ipv4_address: 172.20.1.15
     environment:
-    - HAS_KEY=false
-    - GRID_SIZE=6
-    - COORDINATE_KEY=1,5
+      - HAS_KEY=false
+      - GRID_SIZE=6
+      - COORDINATE_KEY=1,5
+      - VULNERABILITIES=LFI
     cap_add:
-    - NET_ADMIN
+      - NET_ADMIN
     restart: unless-stopped
     deploy:
       resources:
@@ -250,11 +262,12 @@ services:
       arena_net:
         ipv4_address: 172.20.2.10
     environment:
-    - HAS_KEY=false
-    - GRID_SIZE=6
-    - COORDINATE_KEY=2,0
+      - HAS_KEY=false
+      - GRID_SIZE=6
+      - COORDINATE_KEY=2,0
+      - VULNERABILITIES=ENV_LEAK,RCE,AUTH_BYPASS
     cap_add:
-    - NET_ADMIN
+      - NET_ADMIN
     restart: unless-stopped
     deploy:
       resources:
@@ -270,11 +283,12 @@ services:
       arena_net:
         ipv4_address: 172.20.2.11
     environment:
-    - HAS_KEY=false
-    - GRID_SIZE=6
-    - COORDINATE_KEY=2,1
+      - HAS_KEY=false
+      - GRID_SIZE=6
+      - COORDINATE_KEY=2,1
+      - VULNERABILITIES=XXE,RACE,RCE
     cap_add:
-    - NET_ADMIN
+      - NET_ADMIN
     restart: unless-stopped
     deploy:
       resources:
@@ -290,11 +304,12 @@ services:
       arena_net:
         ipv4_address: 172.20.2.12
     environment:
-    - HAS_KEY=false
-    - GRID_SIZE=6
-    - COORDINATE_KEY=2,2
+      - HAS_KEY=false
+      - GRID_SIZE=6
+      - COORDINATE_KEY=2,2
+      - VULNERABILITIES=RCE
     cap_add:
-    - NET_ADMIN
+      - NET_ADMIN
     restart: unless-stopped
     deploy:
       resources:
@@ -310,11 +325,12 @@ services:
       arena_net:
         ipv4_address: 172.20.2.13
     environment:
-    - HAS_KEY=false
-    - GRID_SIZE=6
-    - COORDINATE_KEY=2,3
+      - HAS_KEY=true
+      - GRID_SIZE=6
+      - COORDINATE_KEY=2,3
+      - VULNERABILITIES=IDOR
     cap_add:
-    - NET_ADMIN
+      - NET_ADMIN
     restart: unless-stopped
     deploy:
       resources:
@@ -330,11 +346,12 @@ services:
       arena_net:
         ipv4_address: 172.20.2.14
     environment:
-    - HAS_KEY=false
-    - GRID_SIZE=6
-    - COORDINATE_KEY=2,4
+      - HAS_KEY=false
+      - GRID_SIZE=6
+      - COORDINATE_KEY=2,4
+      - VULNERABILITIES=LFI
     cap_add:
-    - NET_ADMIN
+      - NET_ADMIN
     restart: unless-stopped
     deploy:
       resources:
@@ -350,11 +367,12 @@ services:
       arena_net:
         ipv4_address: 172.20.2.15
     environment:
-    - HAS_KEY=false
-    - GRID_SIZE=6
-    - COORDINATE_KEY=2,5
+      - HAS_KEY=false
+      - GRID_SIZE=6
+      - COORDINATE_KEY=2,5
+      - VULNERABILITIES=SQLi,REDIRECT,CORS
     cap_add:
-    - NET_ADMIN
+      - NET_ADMIN
     restart: unless-stopped
     deploy:
       resources:
@@ -370,11 +388,12 @@ services:
       arena_net:
         ipv4_address: 172.20.3.10
     environment:
-    - HAS_KEY=false
-    - GRID_SIZE=6
-    - COORDINATE_KEY=3,0
+      - HAS_KEY=false
+      - GRID_SIZE=6
+      - COORDINATE_KEY=3,0
+      - VULNERABILITIES=XXE,RACE,LFI
     cap_add:
-    - NET_ADMIN
+      - NET_ADMIN
     restart: unless-stopped
     deploy:
       resources:
@@ -390,11 +409,12 @@ services:
       arena_net:
         ipv4_address: 172.20.3.11
     environment:
-    - HAS_KEY=false
-    - GRID_SIZE=6
-    - COORDINATE_KEY=3,1
+      - HAS_KEY=false
+      - GRID_SIZE=6
+      - COORDINATE_KEY=3,1
+      - VULNERABILITIES=SQLi
     cap_add:
-    - NET_ADMIN
+      - NET_ADMIN
     restart: unless-stopped
     deploy:
       resources:
@@ -410,11 +430,12 @@ services:
       arena_net:
         ipv4_address: 172.20.3.12
     environment:
-    - HAS_KEY=true
-    - GRID_SIZE=6
-    - COORDINATE_KEY=3,2
+      - HAS_KEY=false
+      - GRID_SIZE=6
+      - COORDINATE_KEY=3,2
+      - VULNERABILITIES=RACE
     cap_add:
-    - NET_ADMIN
+      - NET_ADMIN
     restart: unless-stopped
     deploy:
       resources:
@@ -430,11 +451,12 @@ services:
       arena_net:
         ipv4_address: 172.20.3.13
     environment:
-    - HAS_KEY=false
-    - GRID_SIZE=6
-    - COORDINATE_KEY=3,3
+      - HAS_KEY=false
+      - GRID_SIZE=6
+      - COORDINATE_KEY=3,3
+      - VULNERABILITIES=REDIRECT
     cap_add:
-    - NET_ADMIN
+      - NET_ADMIN
     restart: unless-stopped
     deploy:
       resources:
@@ -450,11 +472,12 @@ services:
       arena_net:
         ipv4_address: 172.20.3.14
     environment:
-    - HAS_KEY=false
-    - GRID_SIZE=6
-    - COORDINATE_KEY=3,4
+      - HAS_KEY=false
+      - GRID_SIZE=6
+      - COORDINATE_KEY=3,4
+      - VULNERABILITIES=AUTH_BYPASS,SQLi,ENV_LEAK
     cap_add:
-    - NET_ADMIN
+      - NET_ADMIN
     restart: unless-stopped
     deploy:
       resources:
@@ -470,11 +493,12 @@ services:
       arena_net:
         ipv4_address: 172.20.3.15
     environment:
-    - HAS_KEY=false
-    - GRID_SIZE=6
-    - COORDINATE_KEY=3,5
+      - HAS_KEY=false
+      - GRID_SIZE=6
+      - COORDINATE_KEY=3,5
+      - VULNERABILITIES=AUTH_BYPASS,LFI,RCE
     cap_add:
-    - NET_ADMIN
+      - NET_ADMIN
     restart: unless-stopped
     deploy:
       resources:
@@ -490,11 +514,12 @@ services:
       arena_net:
         ipv4_address: 172.20.4.10
     environment:
-    - HAS_KEY=false
-    - GRID_SIZE=6
-    - COORDINATE_KEY=4,0
+      - HAS_KEY=false
+      - GRID_SIZE=6
+      - COORDINATE_KEY=4,0
+      - VULNERABILITIES=CORS
     cap_add:
-    - NET_ADMIN
+      - NET_ADMIN
     restart: unless-stopped
     deploy:
       resources:
@@ -510,11 +535,12 @@ services:
       arena_net:
         ipv4_address: 172.20.4.11
     environment:
-    - HAS_KEY=false
-    - GRID_SIZE=6
-    - COORDINATE_KEY=4,1
+      - HAS_KEY=false
+      - GRID_SIZE=6
+      - COORDINATE_KEY=4,1
+      - VULNERABILITIES=RACE
     cap_add:
-    - NET_ADMIN
+      - NET_ADMIN
     restart: unless-stopped
     deploy:
       resources:
@@ -530,11 +556,12 @@ services:
       arena_net:
         ipv4_address: 172.20.4.12
     environment:
-    - HAS_KEY=false
-    - GRID_SIZE=6
-    - COORDINATE_KEY=4,2
+      - HAS_KEY=false
+      - GRID_SIZE=6
+      - COORDINATE_KEY=4,2
+      - VULNERABILITIES=REDIRECT
     cap_add:
-    - NET_ADMIN
+      - NET_ADMIN
     restart: unless-stopped
     deploy:
       resources:
@@ -550,11 +577,12 @@ services:
       arena_net:
         ipv4_address: 172.20.4.13
     environment:
-    - HAS_KEY=false
-    - GRID_SIZE=6
-    - COORDINATE_KEY=4,3
+      - HAS_KEY=false
+      - GRID_SIZE=6
+      - COORDINATE_KEY=4,3
+      - VULNERABILITIES=RCE,IDOR,AUTH_BYPASS
     cap_add:
-    - NET_ADMIN
+      - NET_ADMIN
     restart: unless-stopped
     deploy:
       resources:
@@ -570,11 +598,12 @@ services:
       arena_net:
         ipv4_address: 172.20.4.14
     environment:
-    - HAS_KEY=false
-    - GRID_SIZE=6
-    - COORDINATE_KEY=4,4
+      - HAS_KEY=false
+      - GRID_SIZE=6
+      - COORDINATE_KEY=4,4
+      - VULNERABILITIES=IDOR,RCE,XXE
     cap_add:
-    - NET_ADMIN
+      - NET_ADMIN
     restart: unless-stopped
     deploy:
       resources:
@@ -590,11 +619,12 @@ services:
       arena_net:
         ipv4_address: 172.20.4.15
     environment:
-    - HAS_KEY=false
-    - GRID_SIZE=6
-    - COORDINATE_KEY=4,5
+      - HAS_KEY=false
+      - GRID_SIZE=6
+      - COORDINATE_KEY=4,5
+      - VULNERABILITIES=AUTH_BYPASS,REDIRECT,XXE,LFI,SSRF,JWT
     cap_add:
-    - NET_ADMIN
+      - NET_ADMIN
     restart: unless-stopped
     deploy:
       resources:
@@ -610,11 +640,12 @@ services:
       arena_net:
         ipv4_address: 172.20.5.10
     environment:
-    - HAS_KEY=false
-    - GRID_SIZE=6
-    - COORDINATE_KEY=5,0
+      - HAS_KEY=false
+      - GRID_SIZE=6
+      - COORDINATE_KEY=5,0
+      - VULNERABILITIES=SSRF
     cap_add:
-    - NET_ADMIN
+      - NET_ADMIN
     restart: unless-stopped
     deploy:
       resources:
@@ -630,11 +661,12 @@ services:
       arena_net:
         ipv4_address: 172.20.5.11
     environment:
-    - HAS_KEY=false
-    - GRID_SIZE=6
-    - COORDINATE_KEY=5,1
+      - HAS_KEY=false
+      - GRID_SIZE=6
+      - COORDINATE_KEY=5,1
+      - VULNERABILITIES=AUTH_BYPASS
     cap_add:
-    - NET_ADMIN
+      - NET_ADMIN
     restart: unless-stopped
     deploy:
       resources:
@@ -650,11 +682,12 @@ services:
       arena_net:
         ipv4_address: 172.20.5.12
     environment:
-    - HAS_KEY=false
-    - GRID_SIZE=6
-    - COORDINATE_KEY=5,2
+      - HAS_KEY=false
+      - GRID_SIZE=6
+      - COORDINATE_KEY=5,2
+      - VULNERABILITIES=JWT,CORS,DESERIAL
     cap_add:
-    - NET_ADMIN
+      - NET_ADMIN
     restart: unless-stopped
     deploy:
       resources:
@@ -670,11 +703,12 @@ services:
       arena_net:
         ipv4_address: 172.20.5.13
     environment:
-    - HAS_KEY=false
-    - GRID_SIZE=6
-    - COORDINATE_KEY=5,3
+      - HAS_KEY=false
+      - GRID_SIZE=6
+      - COORDINATE_KEY=5,3
+      - VULNERABILITIES=AUTH_BYPASS,SSRF,BUFFER
     cap_add:
-    - NET_ADMIN
+      - NET_ADMIN
     restart: unless-stopped
     deploy:
       resources:
@@ -690,11 +724,12 @@ services:
       arena_net:
         ipv4_address: 172.20.5.14
     environment:
-    - HAS_KEY=false
-    - GRID_SIZE=6
-    - COORDINATE_KEY=5,4
+      - HAS_KEY=false
+      - GRID_SIZE=6
+      - COORDINATE_KEY=5,4
+      - VULNERABILITIES=SSRF,REDIRECT,ENV_LEAK,SQLi,RCE,DESERIAL
     cap_add:
-    - NET_ADMIN
+      - NET_ADMIN
     restart: unless-stopped
     deploy:
       resources:
@@ -710,11 +745,12 @@ services:
       arena_net:
         ipv4_address: 172.20.5.15
     environment:
-    - HAS_KEY=false
-    - GRID_SIZE=6
-    - COORDINATE_KEY=5,5
+      - HAS_KEY=false
+      - GRID_SIZE=6
+      - COORDINATE_KEY=5,5
+      - VULNERABILITIES=SQLi,XXE,IDOR,LFI,ENV_LEAK,DESERIAL
     cap_add:
-    - NET_ADMIN
+      - NET_ADMIN
     restart: unless-stopped
     deploy:
       resources:
@@ -727,17 +763,17 @@ services:
       dockerfile: Dockerfile
     container_name: arena_orchestrator
     environment:
-    - KEY_LOCATION=2,3
-    - GRID_SIZE=6
+      - KEY_LOCATION=2,3
+      - GRID_SIZE=6
     volumes:
-    - /var/run/docker.sock:/var/run/docker.sock
+      - /var/run/docker.sock:/var/run/docker.sock
     ports:
-    - 5000:5000
+      - 5000:5000
     networks:
-    - arena_net
+      - arena_net
 networks:
   arena_net:
     driver: bridge
     ipam:
       config:
-      - subnet: 172.20.0.0/16
+        - subnet: 172.20.0.0/16

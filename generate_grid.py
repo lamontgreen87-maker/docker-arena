@@ -36,7 +36,32 @@ compose = {
     }
 }
 
-# Generate 16 Nodes
+# Vulnerability Distribution Logic
+ALL_VULNS = [
+    'RCE', 'LFI', 'SQLi', 'SSRF', 'XXE', 'DESERIAL', 
+    'IDOR', 'AUTH_BYPASS', 'JWT', 'RACE', 'CORS', 
+    'BUFFER', 'REDIRECT', 'ENV_LEAK'
+]
+
+def get_vulns_for_coord(x, y):
+    # Calculate distance to both bases
+    dist_red = x + y
+    dist_blue = (GRID_SIZE-1 - x) + (GRID_SIZE-1 - y)
+    min_dist = min(dist_red, dist_blue)
+    
+    # 0-1: Easy (6 vulns)
+    # 2-3: Medium (3 vulns)
+    # 4+: Hard (1 vuln)
+    if min_dist <= 1:
+        count = 6
+    elif min_dist <= 3:
+        count = 3
+    else:
+        count = 1
+        
+    return ",".join(random.sample(ALL_VULNS, count))
+
+# Generate Nodes
 for y in range(GRID_SIZE):
     for x in range(GRID_SIZE):
         service_name = f"node_{y}_{x}"
@@ -46,6 +71,8 @@ for y in range(GRID_SIZE):
         has_key = "false"
         if x == key_x and y == key_y:
             has_key = "true"
+        
+        vulns = get_vulns_for_coord(x, y)
         
         compose["services"][service_name] = {
             "build": {
@@ -61,7 +88,8 @@ for y in range(GRID_SIZE):
             "environment": [
                 f"HAS_KEY={has_key}",
                 f"GRID_SIZE={GRID_SIZE}",
-                f"COORDINATE_KEY={y},{x}"
+                f"COORDINATE_KEY={y},{x}",
+                f"VULNERABILITIES={vulns}"
             ],
             "cap_add": ["NET_ADMIN"],
             "restart": "unless-stopped",
