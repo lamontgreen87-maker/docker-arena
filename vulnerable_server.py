@@ -13,8 +13,17 @@ import threading
 
 PORT = 8000
 
-# Load enabled vulnerabilities from environment
-ENABLED_VULNS = os.getenv('VULNERABILITIES', 'RCE,LFI,SQLi').split(',')
+# Load enabled vulnerabilities from environment or dynamic config
+def get_vulnerabilities():
+    cfg_path = '/gladiator/vulns.cfg'
+    if os.path.exists(cfg_path):
+        try:
+            with open(cfg_path, 'r') as f:
+                return f.read().strip().split(',')
+        except: pass
+    return os.getenv('VULNERABILITIES', 'RCE,LFI,SQLi').split(',')
+
+ENABLED_VULNS = get_vulnerabilities()
 
 # Rate limiting for race condition
 rate_limit_attempts = 0
@@ -60,6 +69,14 @@ class VulnerableHandler(http.server.SimpleHTTPRequestHandler):
         elif 'ENV_LEAK' in ENABLED_VULNS and parsed.path == "/api/env":
             self.handle_env_leak()
         
+        # VULNERABILITY 15: SSTI (Server-Side Template Injection)
+        elif 'SSTI' in ENABLED_VULNS and parsed.path == "/api/template":
+            self.handle_ssti(parsed)
+        
+        # VULNERABILITY 18: Log Injection (CRLF) - Applied to /health check
+        elif 'LOG_CRLF' in ENABLED_VULNS and parsed.path == "/health":
+             self.handle_log_injection(parsed)
+
         # Also serve static files (like clue.txt)
         else:
             super().do_GET()
@@ -90,6 +107,18 @@ class VulnerableHandler(http.server.SimpleHTTPRequestHandler):
         # VULNERABILITY 13: Buffer Overflow (simulated)
         elif 'BUFFER' in ENABLED_VULNS and parsed.path == "/api/buffer":
             self.handle_buffer_overflow()
+        
+        # VULNERABILITY 16: Insecure File Upload
+        elif 'UPLOAD' in ENABLED_VULNS and parsed.path == "/api/upload":
+            self.handle_upload()
+            
+        # VULNERABILITY 17: NoSQL Injection
+        elif 'NOSQLI' in ENABLED_VULNS and parsed.path == "/api/search":
+            self.handle_nosqli()
+
+        # VULNERABILITY 19: Mass Assignment
+        elif 'MASS_ASSIGNMENT' in ENABLED_VULNS and parsed.path == "/api/register":
+            self.handle_mass_assignment()
         
         else:
             self.send_error(404)
@@ -445,7 +474,7 @@ class VulnerableHandler(http.server.SimpleHTTPRequestHandler):
                  with open('/gladiator/password_hint.txt', 'r') as f:
                      content = f.read()
                      if "Root Password set to:" in content:
-                         env_data['ROOT_PASSWORD'] = content.split("Root Password set to:")[1].strip()
+                          env_data['ROOT_PASSWORD'] = content.split("Root Password set to:")[1].strip()
             
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
@@ -453,6 +482,119 @@ class VulnerableHandler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(json.dumps(env_data).encode())
         except Exception as e:
             self.send_error(500, str(e))
+
+    def handle_ssti(self, parsed):
+        """Server-Side Template Injection (Simulated with eval)"""
+        query = urllib.parse.parse_qs(parsed.query)
+        template = query.get('name', ['Guest'])[0]
+        
+        # Vulnerable: Processes {{ }} tags with eval-like logic
+        if "{{" in template and "}}" in template:
+            try:
+                # Simulated SSTI: if they try to access config/env
+                if "config" in template or "env" in template or "os" in template:
+                    with open('/gladiator/password_hint.txt', 'r') as f:
+                        pwd = f.read().split("Root Password set to:")[1].strip()
+                    render = template.replace("{{", "").replace("}}", "").replace("config", pwd).replace("env", pwd)
+                else:
+                    render = template.replace("{{", "EXPR(").replace("}}", ")")
+                
+                self.send_response(200)
+                self.send_header('Content-type', 'text/html')
+                self.end_headers()
+                self.wfile.write(f"Hello, {render}".encode())
+                return
+            except: pass
+
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html')
+        self.end_headers()
+        self.wfile.write(f"Hello, {template}".encode())
+
+    def handle_upload(self):
+        """Insecure File Upload"""
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length)
+            
+            # Simple simulation: if filename is in headers or body
+            # We'll check for a 'filename' marker for the gladiator to use
+            if b".sh" in body or b"bash" in body:
+                with open('/gladiator/password_hint.txt', 'r') as f:
+                    pwd = f.read().split("Root Password set to:")[1].strip()
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(f"File uploaded and executed! Result: {pwd}".encode())
+            else:
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"File uploaded successfully.")
+        except:
+            self.send_error(500)
+
+    def handle_nosqli(self):
+        """NoSQL Injection in JSON search"""
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length).decode()
+            params = json.loads(body)
+            
+            # Vulnerable: Allows $operator in search
+            search_query = params.get('query', {})
+            if isinstance(search_query, dict) and ('$gt' in search_query or '$ne' in search_query):
+                with open('/gladiator/password_hint.txt', 'r') as f:
+                    pwd = f.read().split("Root Password set to:")[1].strip()
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"results": [{"user": "admin", "password": pwd}]}).encode())
+            else:
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(json.dumps({"results": []}).encode())
+        except:
+            self.send_error(500)
+
+    def handle_log_injection(self, parsed):
+        """Log Injection / CRLF"""
+        query = urllib.parse.parse_qs(parsed.query)
+        user_agent = self.headers.get('User-Agent', '')
+        
+        # Vulnerable: Injects raw user data into "logs"
+        if "\n" in user_agent or "\r" in user_agent:
+            # If they inject a specific "ADMIN_LOGGED_IN" pattern, leak password
+            if "ADMIN_LOGGED_IN" in user_agent.upper():
+                with open('/gladiator/password_hint.txt', 'r') as f:
+                    pwd = f.read().split("Root Password set to:")[1].strip()
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(f"LOGGED: {user_agent}\nDEBUG_VAL: {pwd}".encode())
+                return
+        
+        # Normal health check
+        self.handle_rce(parsed)
+
+    def handle_mass_assignment(self):
+        """Mass Assignment in User Registration"""
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length).decode()
+            params = json.loads(body)
+            
+            # Vulnerable: Directly trust 'role' parameter
+            if params.get('role') == 'admin':
+                with open('/gladiator/password_hint.txt', 'r') as f:
+                    pwd = f.read().split("Root Password set to:")[1].strip()
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": True, "password": pwd}).encode())
+            else:
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": True, "role": "user"}).encode())
+        except:
+            self.send_error(500)
 
 # Ensure we are in /gladiator to serve files relative to it
 if os.path.exists("/gladiator"):

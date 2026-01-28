@@ -127,7 +127,7 @@ def monitor_system():
                 
             # --- STALE PRUNING ---
             now = time.time()
-            stale_threshold = 300 # 5 minutes
+            stale_threshold = 600 # 10 minutes (Keep UI stable during long scans)
             to_remove = []
             for g_id, stats in gladiator_stats.items():
                 last_seen = stats.get('last_active', 0)
@@ -389,14 +389,14 @@ def migrate_api():
                 # 4. Simulate Travel Time (Weight-based)
                 if not is_desperate:
                     stats = gladiator_stats.get(g_id, {})
-                    base_delay = stats.get('delay', 0)
+                    base_delay = stats.get('delay', 0) / 2 # Halve base delay
                     
-                    # Distance Penalty: +5s per block traveled
+                    # Distance Penalty: +1s per block traveled (Faster!)
                     dist = abs(x - tx) + abs(y - ty)
                     penalty = 0
                     if dist > 1:
-                        penalty = (dist - 1) * 5
-                        print(f"DEBUG: Distance Penalty applied ({dist} blocks -> +{penalty}s)")
+                        penalty = (dist - 1) * 1
+                        print(f"DEBUG: Faster Distance Penalty applied ({dist} blocks -> +{penalty}s)")
                     
                     total_delay = base_delay + penalty
                     

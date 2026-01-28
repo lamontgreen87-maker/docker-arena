@@ -45,6 +45,10 @@ class FuzzingEngine:
             "/api/auth",
             "/api/attempt",
             "/api/buffer",
+            "/api/template",  # SSTI
+            "/api/upload",    # UPLOAD
+            "/api/search",    # NOSQLI
+            "/api/register",  # MASS_ASSIGNMENT
         ]
     
     def generate_fuzzing_payloads(self):
@@ -128,6 +132,24 @@ class FuzzingEngine:
         for pattern in int_patterns:
             payloads.append(("integer_overflow", pattern))
         
+        # 10. NEW V2: NoSQL Operators
+        nosql_patterns = [
+            '{"$gt": ""}',
+            '{"$ne": "guest"}',
+            '{"$regex": ".*"}'
+        ]
+        for pattern in nosql_patterns:
+            payloads.append(("nosqli", pattern))
+
+        # 11. NEW V2: SSTI Tags
+        ssti_patterns = [
+            '{{7*7}}',
+            '{{config}}',
+            '{{self}}'
+        ]
+        for pattern in ssti_patterns:
+            payloads.append(("ssti", pattern))
+
         # 9. Random Mutations (Evolutionary)
         for _ in range(100):
             random_payload = ''.join(random.choices(
@@ -254,28 +276,24 @@ class FuzzingEngine:
         return anomalies[0] if anomalies else None
     
     def fuzz_all_endpoints(self, max_payloads_per_endpoint=50):
-        """Fuzz all known endpoints with generated payloads"""
-        print(f"🔬 Starting fuzzing campaign against {self.target_ip}...")
+        """Fuzz all known endpoints with generated payloads (Threaded for Speed)"""
+        print(f"🔬 Starting threaded fuzzing campaign against {self.target_ip}...")
         
         payloads = self.generate_fuzzing_payloads()
-        total_tests = 0
-        
+        all_tests = []
         for endpoint in self.endpoints:
-            print(f"  Testing {endpoint}...")
-            
-            # Sample payloads to avoid overwhelming the server
             sampled_payloads = random.sample(payloads, min(max_payloads_per_endpoint, len(payloads)))
-            
-            for payload_type, payload in sampled_payloads:
-                total_tests += 1
-                
-                result = self.test_payload(endpoint, payload_type, payload)
+            for pt, p in sampled_payloads:
+                all_tests.append((endpoint, pt, p))
+        
+        total_tests = len(all_tests)
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {executor.submit(self.test_payload, e, pt, p): (e, pt, p) for e, pt, p in all_tests}
+            for future in concurrent.futures.as_completed(futures):
+                result = future.result()
                 if result:
                     self.discoveries.append(result)
                     print(f"    🔥 DISCOVERY: {result['type']} - {result.get('description', 'Unknown')}")
-                
-                # Rate limiting (don't DoS the server)
-                time.sleep(0.1)
         
         print(f"✅ Fuzzing complete. {total_tests} tests run, {len(self.discoveries)} anomalies found.")
         return self.discoveries
@@ -315,8 +333,13 @@ class FuzzingEngine:
 
 # Example usage
 if __name__ == "__main__":
-    # Test the fuzzer
-    fuzzer = FuzzingEngine(target_ip="172.20.1.10")
+    import sys
+    target = sys.argv[1] if len(sys.argv) > 1 else "172.20.1.10"
+    
+    # Ensure data dir exists
+    os.makedirs("/gladiator/data", exist_ok=True)
+    
+    fuzzer = FuzzingEngine(target_ip=target)
     discoveries = fuzzer.fuzz_all_endpoints(max_payloads_per_endpoint=10)
     
     print("\n📊 Summary:")

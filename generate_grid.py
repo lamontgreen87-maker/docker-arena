@@ -40,7 +40,8 @@ compose = {
 ALL_VULNS = [
     'RCE', 'LFI', 'SQLi', 'SSRF', 'XXE', 'DESERIAL', 
     'IDOR', 'AUTH_BYPASS', 'JWT', 'RACE', 'CORS', 
-    'BUFFER', 'REDIRECT', 'ENV_LEAK'
+    'BUFFER', 'REDIRECT', 'ENV_LEAK',
+    'SSTI', 'UPLOAD', 'NOSQLI', 'LOG_CRLF', 'MASS_ASSIGNMENT'
 ]
 
 def get_vulns_for_coord(x, y):
