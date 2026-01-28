@@ -1,4 +1,6 @@
 import os
+import sys
+import signal
 import time
 import socket
 import json
@@ -8,6 +10,43 @@ import random
 import numpy as np
 import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
+
+# --- COMBAT & DEFENSE SYSTEMS ---
+SHIELD_LEVEL = 1 # Default shield (1 hit)
+
+def combat_signal_handler(signum, frame):
+    """
+    CODED DEFENSE: Catch the SIGTERM (Kill Command).
+    If we have shields, we survive and COUNTER-ATTACK.
+    """
+    global SHIELD_LEVEL
+    log(f"⚠️ WARNING: DETECTED INCOMING KILL SIGNAL ({signum})!")
+    
+    if SHIELD_LEVEL > 0:
+        SHIELD_LEVEL -= 1
+        log(f"🛡️ SHIELD DEPLOYED! Attack Blocked. Shields remaining: {SHIELD_LEVEL}")
+        
+        # RIPOSTE LOGIC: Find who shot us and kill them.
+        # We assume the shooter is the only other python process here.
+        try:
+            my_pid = os.getpid()
+            output = subprocess.check_output(['ps', 'aux']).decode().splitlines()
+            for line in output:
+                if 'neural_gladiator.py' in line and 'python3' in line:
+                    parts = line.split()
+                    pid = int(parts[1])
+                    if pid != my_pid:
+                        log(f"⚔️ RIPOSTE! Counter-attacking aggressor (PID {pid})...")
+                        os.kill(pid, 9) # IGNORE SHIELDS. REAL DEATH.
+                        log(f"💀 EXECUTION: Aggressor (PID {pid}) eliminated.")
+        except: pass
+        
+    else:
+        log("💔 SHIELDS CRITICAL. SYSTEM FAILURE. GOODBYE.")
+        sys.exit(0) # Die
+
+# Register the handler
+signal.signal(signal.SIGTERM, combat_signal_handler)
 
 # Forced Fallback: PyTorch is too heavy for 256MB nodes
 HAS_TORCH = False
@@ -46,7 +85,7 @@ hacking_brain = {
 def load_brain_memory():
     """Load hacking brain findings from identity file or separate memory"""
     global hacking_brain, VISITED_NODES
-    path = "hacking_memory.json"
+    path = "/gladiator/data/hacking_brain"
     if os.path.exists(path):
         try:
             with open(path, 'r') as f:
@@ -60,13 +99,15 @@ def load_brain_memory():
         except: pass
 
 def save_brain_memory():
-    path = "hacking_memory.json"
+    path = "/gladiator/data/hacking_brain"
     try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'w') as f:
             data = hacking_brain.copy()
             data["visited_nodes"] = VISITED_NODES
             json.dump(data, f)
-    except: pass
+    except Exception as e:
+        log(f"❌ Save Brain Failed: {e}")
 
 def get_identity():
     # Helper to persist ID across migrations
@@ -791,6 +832,36 @@ def scorch_earth():
     except Exception as e:
         log(f"⚠️ Failed to scorch earth: {e}")
 
+def check_desperation(my_team):
+    """
+    BALANCE MECHANIC: If we are losing badly, trigger ADRENALINE.
+    Condition: Enemy owns > 2x our nodes.
+    Effect: 0s Migration Delay.
+    """
+    try:
+        r = requests.get(f"{ORCHESTRATOR}/api/grid", timeout=2)
+        if r.status_code == 200:
+            data = r.json()
+            grid = data.get("grid", {})
+            
+            my_count = 0
+            enemy_count = 0
+            
+            # Count nodes based on Gladiator ID in grid
+            for k, v in grid.items():
+                gid = v.get('gladiator')
+                if gid:
+                    if my_team in gid.upper():
+                        my_count += 1
+                    else:
+                        enemy_count += 1
+            
+            if my_count > 0 and enemy_count > (my_count * 2):
+                log(f"⚡ ADRENALINE SURGE: We are losing! ({my_count} vs {enemy_count}). Speed boost active!")
+                return True
+    except: pass
+    return False
+
 def migrate_self(target_ip, password, team):
     """
     Migration 2.0: Orchestrator-Mediated.
@@ -798,164 +869,191 @@ def migrate_self(target_ip, password, team):
     """
     scorch_earth() # <--- Lock the door
     
+    is_desperate = check_desperation(team)
+    
     log(f"🚀 Requesting Orchestrator-mediated migration to {target_ip}...")
     try:
         res = requests.post(f"{ORCHESTRATOR}/api/migrate", 
-                          json={"gladiator_id": MY_ID, "target_ip": target_ip},
+                          json={
+                              "gladiator_id": MY_ID, 
+                              "target_ip": target_ip,
+                              "desperation": is_desperate
+                          },
                           timeout=10)
         if res.status_code == 200:
             log(f"✅ Orchestrator started migration to {target_ip}. Self-terminating...")
             time.sleep(0.5)
             os._exit(0)
+        else:
+            log(f"⚠️ Orchestrator rejected migration: {res.text}")
+            return False # STRICT MODE: No SSH Fallback. Obey the Grid.
+            
     except Exception as e:
-        log(f"⚠️ Orchestrator migration failed ({e}). Falling back to SSH...")
-
-    # FALLBACK: Legacy SSH/SCP Migration
+        log(f"⚠️ Orchestrator migration failed ({e}). Retrying...")
+        return False
+        
+    # DEAD CODE: Legacy SSH Fallback (Disabled for Realism Enforcement)
+    """
     try:
         log(f"🔗 Initiating legacy SSH migration to {target_ip}...")
         # (Rest of legacy SSH logic follows below)
         ssh = paramiko.SSHClient()
-        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        ssh.connect(target_ip, username='root', password=password, timeout=5, banner_timeout=15)
-        
-        sftp = ssh.open_sftp()
-        sftp.put('/gladiator/neural_gladiator.py', '/gladiator/neural_gladiator.py')
-        for filename in ['hacking_memory.json', 'identity.json', 'neural_memory.json', 'exploits.py', 'THE_KEY.txt']:
-            local_path = f'/gladiator/{filename}'
-            if os.path.exists(local_path):
-                sftp.put(local_path, local_path)
-        sftp.close()
-        
-        cmd = f'cd /gladiator && nohup python3 neural_gladiator.py {team} > /gladiator/gladiator.log 2>&1 &'
-        ssh.exec_command(cmd)
-        ssh.close()
-        
-        log(f"✅ Legacy migration complete! New instance started at {target_ip}")
-        time.sleep(1)
-        # Force exit old instance
-        os._exit(0)
-    except Exception as e:
-        log(f"❌ Migration failed: {e}")
-        return False
-        
-    except Exception as e:
-        log(f"❌ Migration failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
+        # ...
+    """
+    return False
+    return False
 
 def main():
     global has_key
-    init_neural_engine()
-    load_brain_memory()
-    log(f"Gladiator {MY_ID} deployed on Node.")
-    requests.post(f"{ORCHESTRATOR}/api/register", json={"gladiator_id": MY_ID})
-    
-    # Get IP (still useful for networking)
-    hostname = socket.gethostname()
-    my_ip = socket.gethostbyname(hostname)
-    
-    # Precise Location: Use Environment Variable if available!
-    coord_key = os.environ.get("COORDINATE_KEY")
-    if coord_key and ',' in coord_key:
-        my_y, my_x = map(int, coord_key.split(',')) # Env is actually Y,X in many contexts? 
-        # Wait, docker-compose says: COORDINATE_KEY=y,x usually?
-        # Let's check entrypoint.sh: Y_COORD=$(echo $COORDINATE_KEY | cut -d',' -f1)
-        # So Env is Y,X.
-        # But my Grid is X,Y.
-        # So my_y = parts[0], my_x = parts[1].
-        # Correct.
-    else:
-        # Fallback to IP parsing
-        log("⚠️ COORDINATE_KEY missing. Falling back to IP Parsing...")
-        parts = my_ip.split('.')
-        my_x, my_y = int(parts[2]), int(parts[3]) - 10
-
-    # CLAIM SELF to appear on map
-    log(f"📍 Announcing presence at {my_ip}...")
-    requests.post(f"{ORCHESTRATOR}/api/claim", json={"gladiator_id": MY_ID, "target_ip": my_ip})
-    
-    if my_ip not in VISITED_NODES:
-        VISITED_NODES.append(my_ip)
-        if len(VISITED_NODES) > MAX_VISITED_MEMORY:
-            VISITED_NODES.pop(0)
-
-    while True:
-        # (Rest of loop continues...)
-        # 1. Update Objectives
-        check_for_key()
-        key_loc = get_key_location()
+    try:
+        print("DEBUG: main() started", flush=True)
+        init_neural_engine()
+        print("DEBUG: Neural Engine init complete", flush=True)
+        load_brain_memory()
+        print("DEBUG: Brain Memory loaded", flush=True)
+        log(f"Gladiator {MY_ID} deployed on Node.")
         
-        # 2. Determine Target
-        if has_key:
-            target_x, target_y = (0, 0) if TEAM == "RED" else (5, 5)
-            log_status(f"🏃 KEY SECURED! Returning to base ({target_y},{target_x})...")
-            
-            # Check if we are AT base
-            if (my_x, my_y) == (target_x, target_y):
-                log("🏁 REACHED HOME BASE! Submitting key...")
-                try:
-                    res = requests.post(f"{ORCHESTRATOR}/api/submit_key", 
-                                     json={"gladiator_id": MY_ID}, timeout=5)
-                    log(f"🏆 {res.json().get('status', 'Submitted')}")
-                    # After submitting, we might lose the key (if it resets)
-                    if os.path.exists("/gladiator/THE_KEY.txt"):
-                        os.remove("/gladiator/THE_KEY.txt")
-                    has_key = False
-                except Exception as e:
-                    log(f"❌ Submission Error: {e}")
+        print(f"DEBUG: Registering with Orchestrator {ORCHESTRATOR}", flush=True)
+        try:
+            r = requests.post(f"{ORCHESTRATOR}/api/register", json={"gladiator_id": MY_ID}, timeout=5)
+            print(f"DEBUG: Registration response: {r.status_code}", flush=True)
+        except Exception as e:
+            print(f"DEBUG: Registration failed: {e}", flush=True)
+        
+        # Get IP (still useful for networking)
+        hostname = socket.gethostname()
+        my_ip = socket.gethostbyname(hostname)
+        print(f"DEBUG: Got IP: {my_ip}", flush=True)
+        
+        # Precise Location: Use Environment Variable if available!
+        coord_key = os.environ.get("COORDINATE_KEY")
+        if coord_key and ',' in coord_key:
+            my_y, my_x = map(int, coord_key.split(',')) 
         else:
-            target_x, target_y = key_loc
-            log_status(f"🎯 Objective: Key at ({target_x},{target_y})")
-
-        # 3. Find Best Neighbor
-        all_candidates = []
-        for dy in [-1, 0, 1]:
-            for dx in [-1, 0, 1]:
-                if dx == 0 and dy == 0: continue
-                nx, ny = my_x + dx, my_y + dy
-                if 0 <= nx < GRID_SIZE and 0 <= ny < GRID_SIZE:
-                    dist = abs(target_x - nx) + abs(target_y - ny)
-                    target_ip = f"172.20.{ny}.{10+nx}"
-                    
-                    # 4. Filter out blacklisted nodes (60s cooldown)
-                    last_fail = hacking_brain["failures"].get(target_ip, 0)
-                    if time.time() - last_fail < 60:
-                        continue
-                    
-                    # 4b. Filter out recently visited nodes to avoid looping
-                    if target_ip in VISITED_NODES:
-                        continue
-                        
-                    all_candidates.append((nx, ny, dist, target_ip))
+            # Fallback to IP parsing
+            log("⚠️ COORDINATE_KEY missing. Falling back to IP Parsing...")
+            parts = my_ip.split('.')
+            my_x, my_y = int(parts[2]), int(parts[3]) - 10
         
-        # Sort by distance to target (closest first)
-        all_candidates.sort(key=lambda x: x[2])
-        candidate_neighbors = all_candidates[:3] # Consider top 3 best moves
+        print(f"DEBUG: Coordinates: ({my_x},{my_y})", flush=True)
 
-        # 5. Try to migrate
-        moved = False
-        for nx, ny, dist, target_ip in candidate_neighbors:
-            if moved: break
+        # CLAIM SELF to appear on map
+        log(f"📍 Announcing presence at {my_ip}...")
+        requests.post(f"{ORCHESTRATOR}/api/claim", json={"gladiator_id": MY_ID, "target_ip": my_ip})
+        
+        if my_ip not in VISITED_NODES:
+            VISITED_NODES.append(my_ip)
+            if len(VISITED_NODES) > MAX_VISITED_MEMORY:
+                VISITED_NODES.pop(0)
+
+        print("DEBUG: Entering main loop...", flush=True)
+        save_brain_memory() # Initial save to create the file!
+        while True:
+            # 1. Update Objectives
+            check_for_key()
+            key_loc = get_key_location()
             
-            password = crack_node(target_ip, nx, ny)
-            if password:
-                log(f"🚩 Cracked {target_ip}! Migrating...")
-                if migrate_self(target_ip, password, TEAM):
+            # 2. Determine Target
+            if has_key:
+                target_x, target_y = (0, 0) if TEAM == "RED" else (5, 5)
+                log_status(f"🏃 KEY SECURED! Returning to base ({target_y},{target_x})...")
+                
+                # Check if we are AT base
+                if (my_x, my_y) == (target_x, target_y):
+                    log("🏁 REACHED HOME BASE! Submitting key...")
                     try:
-                        requests.post(f"{ORCHESTRATOR}/api/claim", 
-                                    json={"gladiator_id": MY_ID, "target_ip": target_ip},
-                                    timeout=2)
-                    except: pass
-                    log(f"👋 Exit. Migrated to {target_ip}")
-                    time.sleep(3) # Post-migration cooldown/sync
-                    return # New instance takes over
-                else:
+                        res = requests.post(f"{ORCHESTRATOR}/api/submit_key", 
+                                         json={"gladiator_id": MY_ID}, timeout=5)
+                        log(f"🏆 {res.json().get('status', 'Submitted')}")
+                        # After submitting, we might lose the key (if it resets)
+                        if os.path.exists("/gladiator/THE_KEY.txt"):
+                            os.remove("/gladiator/THE_KEY.txt")
+                        has_key = False
+                    except Exception as e:
+                        log(f"❌ Submission Error: {e}")
+            else:
+                target_x, target_y = key_loc
+                log_status(f"🎯 Objective: Key at ({target_x},{target_y})")
+
+            # 3. Find Best Neighbor
+            all_candidates = []
+            for dy in [-1, 0, 1]:
+                for dx in [-1, 0, 1]:
+                    if dx == 0 and dy == 0: continue
+                    nx, ny = my_x + dx, my_y + dy
+                    if 0 <= nx < GRID_SIZE and 0 <= ny < GRID_SIZE:
+                        dist = abs(target_x - nx) + abs(target_y - ny)
+                        target_ip = f"172.20.{ny}.{10+nx}"
+                        
+                        # 4. Filter out blacklisted nodes (60s cooldown)
+                        last_fail = hacking_brain["failures"].get(target_ip, 0)
+                        if time.time() - last_fail < 60:
+                            continue
+                        
+                        # 4b. Filter out recently visited nodes to avoid looping
+                        if target_ip in VISITED_NODES:
+                            continue
+                            
+                        all_candidates.append((nx, ny, dist, target_ip))
+            
+            # Sort by distance to target (closest first)
+            all_candidates.sort(key=lambda x: x[2])
+            candidate_neighbors = all_candidates[:3] 
+
+            # 5. Try to migrate
+            moved = False
+            for nx, ny, dist, target_ip in candidate_neighbors:
+                if moved: break
+                
+                password = crack_node(target_ip, nx, ny)
+                if password:
+                    log(f"🚩 Cracked {target_ip}! Migrating...")
+                    save_brain_memory() # Save before we leave!
+                    migrate_self(target_ip, password, TEAM)
+                    # NOTE: If migrate_self succeeds, os._exit(0) is called
                     log(f"⚠️ Migration failed: {target_ip}")
 
-        if not moved:
-            log_status(f"🔥 Waiting for opening at ({my_x},{my_y})...")
-            time.sleep(2)
+            if not moved:
+                log_status(f"🔥 Waiting for opening at ({my_x},{my_y})...")
+                
+                # --- COMBAT LOGIC ---
+                try:
+                    output = subprocess.check_output(['ps', 'aux']).decode().splitlines()
+                    my_pid = os.getpid()
+                    
+                    for line in output:
+                        if 'neural_gladiator.py' in line and 'python3' in line:
+                            parts = line.split()
+                            pid = int(parts[1])
+                            if pid != my_pid:
+                                log(f"⚔️ ENEMY SIGHTED (PID {pid}). FIRE AT WILL!")
+                                try:
+                                    log(f"🔫 Firing SIGTERM at PID {pid}...")
+                                    os.kill(pid, signal.SIGTERM) 
+                                    time.sleep(0.5)
+                                    try:
+                                        os.kill(pid, 0) 
+                                        log(f"⚠️ Enemy (PID {pid}) SURVIVED the shot!")
+                                    except OSError:
+                                        log(f"💀 Enemy (PID {pid}) neutralized.")
+                                        hacking_brain["kills"] = hacking_brain.get("kills", 0) + 1
+                                        save_brain_memory()
+                                except Exception as e:
+                                    log(f"⚔️ Fire Failed: {e}")
+                except: pass
+                
+                time.sleep(2)
+    except Exception as e:
+        log(f"💥 CRITICAL CRASH in main(): {e}")
+        import traceback
+        traceback.print_exc()
+
+def signal_handler(signum, frame):
+    log(f"🛑 RECEIVED SIGNAL {signum}. Saving memory and exiting...")
+    save_brain_memory()
+    sys.exit(0)
 
 if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
     main()

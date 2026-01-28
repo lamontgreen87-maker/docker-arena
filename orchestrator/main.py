@@ -72,7 +72,18 @@ def copy_gladiator(src_container_name, dest_container_name, team="RED"):
         cmd = f"python3 {script} {team}"
         dest.exec_run(cmd, detach=True, workdir="/gladiator")
         
+        
         print(f"Migration complete. {script} started.")
+        
+        # 4. KILL SOURCE PROCESS (Prevent Cloning)
+        # The gladiator should self-terminate via os._exit(0), but as a failsafe,
+        # we forcefully kill all python processes on the source container.
+        try:
+            print(f"Terminating old process on {src_container_name}...")
+            src.exec_run("pkill -9 -f 'python3.*gladiator'", privileged=True)
+        except Exception as e:
+            print(f"Warning: Failed to kill source process: {e}")
+        
         return True
     except Exception as e:
         print(f"MIGRATION CRITICAL ERROR: {e}")
@@ -80,7 +91,7 @@ def copy_gladiator(src_container_name, dest_container_name, team="RED"):
         traceback.print_exc()
         return False
 
-from flask import Flask, jsonify, render_template
+from flask import Flask, jsonify, render_template, request
 from flask_cors import CORS
 import threading
 
@@ -124,20 +135,55 @@ def monitor_system():
                     print(f"Pruning stale gladiator: {g_id}")
                     to_remove.append(g_id)
             
-            for g_id in to_remove:
-                # Remove from stats
-                if g_id in gladiator_stats: del gladiator_stats[g_id]
-                # Remove from logs
-                if g_id in gladiator_logs: del gladiator_logs[g_id]
-                # Clear from grid
+                    # Clear from grid (Indented correctly under the IF statement)
+                    for k, v in grid_state.items():
+                        if v['gladiator'] == g_id:
+                            v['gladiator'] = None
+            
+            # --- RESILIENCY CHECK (Self-Reboot) ---
+            # If a gladiator is registered but not "stale", verify it is actually RUNNING.
+            # If the process was killed (Combat), we need to reboot it.
+            for g_id, stats in gladiator_stats.items():
+                if g_id in to_remove: continue
+                
+                # Find where they are supposedly
+                target_node = None
                 for k, v in grid_state.items():
                     if v['gladiator'] == g_id:
-                        v['gladiator'] = None
+                        target_node = v['id']
+                        break
+            
+            # DEBUG
+            occupied_count = sum(1 for v in grid_state.values() if v['gladiator'])
+            if occupied_count == 0 and len(gladiator_stats) > 0:
+                print(f"DEBUG ALERT: Grid Empty but Stats have {len(gladiator_stats)} gladiators! (Possible Pruning Error)")
+                # Force placement?
+
                 
+                if target_node:
+                    try:
+                        c = client.containers.get(target_node)
+                        # Check for process
+                        # We use pgrep or ps
+                        res = c.exec_run("pgrep -f neural_gladiator.py")
+                        if res.exit_code != 0:
+                            print(f"🚑 MEDIC: Gladiator {g_id} is DOWN on {target_node}! Initiating emergency respawn...")
+                            
+                            # Respawn
+                            team = "RED" if "RED" in g_id.upper() else "BLUE"
+                            cmd = f"nohup python3 neural_gladiator.py {team} > /gladiator/gladiator.log 2>&1 &"
+                            c.exec_run(cmd, detach=True, workdir="/gladiator")
+                            
+                            if g_id in gladiator_logs:
+                                gladiator_logs[g_id].append(f"STATUS: 🚑 SYSTEM REBOOTED AGENT (Combat Recovery)")
+                    except: pass
+
         except Exception as e:
             print(f"Monitor Error: {e}")
+            import traceback
+            traceback.print_exc()
             
-        time.sleep(30)
+        time.sleep(10) # check more frequently
 
 def init_grid():
     print("DEBUG: Initializing Grid (Resetting all nodes to None)")
@@ -184,14 +230,18 @@ def home():
 @app.route('/api/grid', methods=['GET'])
 def get_grid():
     key_loc = os.environ.get("KEY_LOCATION", "2,3")
-    return jsonify({
-        "grid": grid_state,
-        "logs": gladiator_logs,
-        "gladiators": gladiator_stats, # Added for UI visibility
-        "system_health": system_health,
-        "key_location": key_loc,
-        "scores": scores
-    })
+    try:
+        return jsonify({
+            "grid": grid_state,
+            "logs": gladiator_logs,
+            "gladiators": gladiator_stats, # Added for UI visibility
+            "system_health": system_health,
+            "key_location": key_loc,
+            "scores": scores
+        })
+    except Exception as e:
+        print(f"GRID API ERROR: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/reset', methods=['POST', 'GET'])
 def reset_arena():
@@ -206,7 +256,7 @@ def reset_arena():
 
 @app.route('/api/submit_key', methods=['POST'])
 def submit_key():
-    data = request.json
+    data = request.get_json(silent=True) or {}
     g_id = data.get('gladiator_id')
     print(f"DEBUG: Win Request from {g_id}")
     
@@ -225,6 +275,7 @@ def submit_key():
     base = (0, 0) if team == "RED" else (5, 5) # (X, Y)
     
     if coords != base:
+        print(f"DEBUG: Win Fail - {g_id} at {coords} but base is {base}")
         return jsonify({"error": f"Not at base! You are at {coords}, base is {base}"}), 400
         
     # 3. Award Point
@@ -289,29 +340,40 @@ def migrate_api():
     Experimental Orchestrator-Mediated Migration.
     Bypasses unstable SSH by using Docker API.
     """
-    data = request.json
-    g_id = data.get('gladiator_id')
-    target_ip = data.get('target_ip')
-    
-    if not g_id or not target_ip:
-        return jsonify({"error": "Missing data"}), 400
-
-    # 1. Find Source Container
-    src_container = None
-    for k, v in grid_state.items():
-        if v['gladiator'] == g_id:
-            x, y = map(int, k.split(','))
-            src_container = get_container_name(x, y)
-            break
-    
-    if not src_container:
-        return jsonify({"error": "Source gladiator not found on grid"}), 404
-
-    # 2. Resolve target IP to Container Name
+    data = request.get_json(silent=True) or {}
     try:
+        g_id = data.get('gladiator_id')
+        target_ip = data.get('target_ip')
+        is_desperate = data.get('desperation', False)
+        
+        if not g_id or not target_ip:
+            return jsonify({"error": "Missing data"}), 400
+
+        # 1. Find Source Container
+        src_container = None
+        for k, v in grid_state.items():
+            if v.get('gladiator') == g_id:
+                x, y = map(int, k.split(','))
+                src_container = get_container_name(x, y)
+                break
+        
+        if not src_container:
+            return jsonify({"error": "Source gladiator not found on grid"}), 404
+
+        # 2. Resolve target IP to Container Name
         parts = target_ip.split('.')
-        ty = int(parts[2])
-        tx = int(parts[3]) - 10
+        tx = int(parts[3]) - 10 # Fix: x and y were swapped
+        ty = int(parts[2])     # Fix: x and y were swapped
+        
+        # 2a. ENFORCE ADJACENCY (Realism: No Teleporting)
+        # We use Chebyshev Distance (Moore Neighborhood).
+        # Max delta on any axis must be <= 1.
+        dx = abs(x - tx)
+        dy = abs(y - ty)
+        
+        if max(dx, dy) > 1 and not is_desperate:
+             return jsonify({"error": f"Target too far ({dx},{dy}). You must pivot through neighbors."}), 400
+
         dest_container = get_container_name(tx, ty)
         
         # 3. Perform Migration with Lock
@@ -325,11 +387,24 @@ def migrate_api():
         def run_migration():
             try:
                 # 4. Simulate Travel Time (Weight-based)
-                stats = gladiator_stats.get(g_id, {})
-                delay = stats.get('delay', 0)
-                if delay > 0:
-                    print(f"DEBUG: {g_id} is traveling... ({delay}s)")
-                    time.sleep(delay)
+                if not is_desperate:
+                    stats = gladiator_stats.get(g_id, {})
+                    base_delay = stats.get('delay', 0)
+                    
+                    # Distance Penalty: +5s per block traveled
+                    dist = abs(x - tx) + abs(y - ty)
+                    penalty = 0
+                    if dist > 1:
+                        penalty = (dist - 1) * 5
+                        print(f"DEBUG: Distance Penalty applied ({dist} blocks -> +{penalty}s)")
+                    
+                    total_delay = base_delay + penalty
+                    
+                    if total_delay > 0:
+                        print(f"DEBUG: {g_id} is traveling... ({total_delay}s)")
+                        time.sleep(total_delay)
+                else:
+                    print(f"DEBUG: {g_id} is DESPERATE! Skipping travel time! ⚡")
                 
                 success = copy_gladiator(src_container, dest_container, team)
                 if success:
@@ -344,6 +419,8 @@ def migrate_api():
         return jsonify({"status": "migration_started", "to": f"{tx},{ty}"})
             
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/claim', methods=['POST'])
@@ -353,7 +430,7 @@ def claim_room():
     Orchestrator just updates grid state for visualization.
     """
     from flask import request
-    data = request.json
+    data = request.get_json(silent=True) or {}
     
     gladiator_id = data.get('gladiator_id')
     target_ip = data.get('target_ip')
@@ -366,8 +443,8 @@ def claim_room():
     # 1. Resolve Target IP to Coordinates
     try:
         parts = target_ip.split('.')
-        x = int(parts[2])
-        y = int(parts[3]) - 10
+        y = int(parts[2])
+        x = int(parts[3]) - 10
     except (IndexError, ValueError):
          return jsonify({"error": "Invalid IP format"}), 400
     
@@ -382,6 +459,17 @@ def claim_room():
         if v['gladiator'] == gladiator_id:
             source_key = k
             break
+    
+    # 2a. ENFORCE ADJACENCY (Prevent Teleportation)
+    # If gladiator is already on the grid, they can only claim adjacent nodes or their current node.
+    if source_key and source_key != target_key:
+        sx, sy = map(int, source_key.split(','))
+        dx = abs(sx - x)
+        dy = abs(sy - y)
+        
+        if max(dx, dy) > 1:
+            print(f"DEBUG: Claim rejected - {gladiator_id} tried to teleport from {source_key} to {target_key} (distance: {dx},{dy})")
+            return jsonify({"error": f"Cannot claim non-adjacent node. Use /api/migrate instead."}), 400
     
     # 3. Update Grid State
     # Clear old location if found
@@ -402,7 +490,7 @@ def get_stats(gladiator_id):
 @app.route('/api/register', methods=['POST'])
 def register_gladiator():
     from flask import request
-    data = request.json
+    data = request.get_json(silent=True) or {}
     print(f"DEBUG: Register Incoming from {request.remote_addr}. Data: {data}")
     gladiator_id = data.get('gladiator_id')
     
@@ -455,12 +543,21 @@ def register_gladiator():
                 container_name = grid_state[key]['id']
                 grid_key = key
                 
-                # CRITICAL FIX: Enforce Singularity
-                # If this gladiator is already on the board somewhere else, remove them.
+                # TEAM SINGULARITY DISABLED - Allow multiple gladiators per team
+                # This enables battle royale mode for training data collection
+                
+                # Still enforce individual gladiator singularity (no clones of same ID)
                 for old_k, old_v in grid_state.items():
-                    if old_v['gladiator'] == gladiator_id and old_k != key:
+                    if old_k == key:
+                        continue  # Don't clear the target location
+                    
+                    # Clear if same gladiator ID (prevent exact duplicates)
+                    if old_v['gladiator'] == gladiator_id:
                         print(f"WARN: Gladiator {gladiator_id} ghost found at {old_k}. Clearing.")
                         grid_state[old_k]['gladiator'] = None
+                
+                # Team-based clearing is DISABLED to allow multiple Blues/Reds
+                # (Commented out for battle royale mode)
 
                 # OVERWRITE / CLAIM
                 print(f"Registration: '{gladiator_id}' claiming node {key} from '{grid_state[key]['gladiator']}'")
@@ -502,7 +599,7 @@ def register_gladiator():
 @app.route('/api/log', methods=['POST'])
 def log_event():
     from flask import request
-    data = request.json
+    data = request.get_json(silent=True) or {}
     
     gladiator_id = data.get('gladiator_id')
     message = data.get('message')
